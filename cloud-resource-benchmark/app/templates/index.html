@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloud Resource Benchmark</title>
+  <meta name="description"
+        content="Academic benchmarking dashboard for studying resource utilisation efficiency across local and cloud environments." />
+
+  <!-- Preconnect to Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/static/css/style.css" />
+
+  <!-- Chart.js (CDN, no auth required) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ====================================================
+     App Header
+     ==================================================== -->
+<header class="app-header" role="banner">
+  <div class="app-header__brand">
+    <div class="app-header__icon" aria-hidden="true">📊</div>
+    <div>
+      <div class="app-header__title">Cloud Resource Benchmark</div>
+      <div class="app-header__subtitle">Research Tool — Resource Utilisation Efficiency Study</div>
+    </div>
+  </div>
+
+  <div class="app-header__meta">
+    <span><span class="status-dot" id="status-dot" aria-label="Live"></span> Live</span>
+    <span class="env-badge" id="env-badge">—</span>
+    <span id="header-cfg" style="font-size:0.72rem; color:var(--text-muted)">—</span>
+  </div>
+</header>
+
+<!-- ====================================================
+     Navigation Tabs
+     ==================================================== -->
+<nav class="nav-tabs" role="tablist" aria-label="Dashboard sections">
+  <button class="nav-tab active" role="tab" data-panel="overview-panel"   id="tab-overview"   aria-selected="true">Overview</button>
+  <button class="nav-tab"        role="tab" data-panel="benchmark-panel"  id="tab-benchmarks" aria-selected="false">Benchmarks</button>
+  <button class="nav-tab"        role="tab" data-panel="history-panel"    id="tab-history"    aria-selected="false">History</button>
+  <button class="nav-tab"        role="tab" data-panel="compare-panel"    id="tab-compare"    aria-selected="false">Local vs Cloud</button>
+  <button class="nav-tab"        role="tab" data-panel="charts-panel"     id="tab-charts"     aria-selected="false">Charts</button>
+</nav>
+
+<!-- ====================================================
+     Main Content
+     ==================================================== -->
+<main class="main-content" id="main-content">
+
+  <!-- ------------------------------------------------
+       1. OVERVIEW PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel active" id="overview-panel" role="tabpanel" aria-labelledby="tab-overview">
+
+    <!-- Live Metrics -->
+    <p class="section-title">Live Metrics <small style="font-size:0.65rem;color:var(--text-muted);text-transform:none;">(updated every 2 s)</small></p>
+    <div class="grid-4 mb-3">
+
+      <div class="metric-card">
+        <div class="metric-card__label">CPU Utilisation</div>
+        <div class="metric-card__value" id="live-cpu">—</div>
+        <div class="progress-bar"><div class="progress-bar__fill progress-bar__fill--blue" id="cpu-bar-fill" style="width:0%"></div></div>
+        <div class="metric-card__sub">system-wide average</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card__label">RAM Utilisation</div>
+        <div class="metric-card__value" id="live-ram-pct">—</div>
+        <div class="progress-bar"><div class="progress-bar__fill progress-bar__fill--green" id="ram-bar-fill" style="width:0%"></div></div>
+        <div class="metric-card__sub">of total physical RAM</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card__label">RAM Used</div>
+        <div class="metric-card__value" id="live-ram-used">—</div>
+        <div class="metric-card__sub">absolute consumption</div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card__label">RAM Available</div>
+        <div class="metric-card__value" id="live-ram-avail">—</div>
+        <div class="metric-card__sub">free for new processes</div>
+      </div>
+
+    </div>
+
+    <!-- System Information -->
+    <p class="section-title">System Information</p>
+    <div class="grid-3 mb-3">
+
+      <div class="card">
+        <div class="card__title">Host &amp; OS</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Hostname</td><td class="mono" id="si-hostname">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">OS</td><td class="mono" id="si-os">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Python</td><td class="mono" id="si-python">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Uptime</td><td class="mono" id="si-uptime">—</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card__title">CPU &amp; Memory</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">CPU Cores</td><td class="mono" id="si-cores">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">CPU %</td><td class="mono" id="si-cpu-pct">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Total RAM</td><td class="mono" id="si-total-ram">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Avail RAM</td><td class="mono" id="si-avail-ram">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">RAM %</td><td class="mono" id="si-ram-pct">—</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card__title">Experiment Identity</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Environment</td><td class="mono text-cyan" id="si-env">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Server Config</td><td class="mono" id="si-config">—</td></tr>
+        </table>
+        <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-secondary);border-radius:var(--radius-sm);font-size:0.73rem;color:var(--text-secondary)">
+          Configure <code>ENVIRONMENT_NAME</code> and <code>SERVER_CONFIGURATION</code> in your <code>.env</code> file to identify this host in benchmark results.
+        </div>
+      </div>
+
+    </div>
+
+  </section><!-- /overview-panel -->
+
+
+  <!-- ------------------------------------------------
+       2. BENCHMARK PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="benchmark-panel" role="tabpanel" aria-labelledby="tab-benchmarks">
+
+    <p class="section-title">Run Benchmarks</p>
+    <div class="grid-3">
+
+      <!-- CPU Benchmark -->
+      <div class="bench-card" id="cpu-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--blue" aria-hidden="true">⚡</div>
+          <div>
+            <div class="bench-card__title">CPU Benchmark</div>
+            <div class="bench-card__desc">Multi-threaded prime counting — stresses all CPU cores</div>
+          </div>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Duration</p>
+        <div class="option-group" id="cpu-options" role="group" aria-label="CPU benchmark duration">
+          <button class="option-btn" data-value="5"  aria-pressed="false">5 seconds</button>
+          <button class="option-btn" data-value="10" aria-pressed="false">10 seconds</button>
+          <button class="option-btn" data-value="30" aria-pressed="false">30 seconds</button>
+        </div>
+
+        <button class="btn-run" id="cpu-run-btn" type="button">
+          <span class="spinner" id="cpu-spinner"></span>
+          Run CPU Benchmark
+        </button>
+
+        <div class="result-box" id="cpu-result"></div>
+      </div>
+
+      <!-- Database Benchmark -->
+      <div class="bench-card" id="db-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--cyan" aria-hidden="true">🗄️</div>
+          <div>
+            <div class="bench-card__title">Database Benchmark</div>
+            <div class="bench-card__desc">Parameterised SELECT queries against 50 000-row PostgreSQL table</div>
+          </div>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Query count</p>
+        <div class="option-group" id="db-options" role="group" aria-label="Database query count">
+          <button class="option-btn" data-value="100"   aria-pressed="false">100 queries</button>
+          <button class="option-btn" data-value="1000"  aria-pressed="false">1 000 queries</button>
+          <button class="option-btn" data-value="10000" aria-pressed="false">10 000 queries</button>
+        </div>
+
+        <button class="btn-run" id="db-run-btn" type="button">
+          <span class="spinner" id="db-spinner"></span>
+          Run Database Benchmark
+        </button>
+
+        <div class="result-box" id="db-result"></div>
+      </div>
+
+      <!-- Data Processing Benchmark -->
+      <div class="bench-card" id="data-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--purple" aria-hidden="true">🧮</div>
+          <div>
+            <div class="bench-card__title">Data Processing Benchmark</div>
+            <div class="bench-card__desc">Matrix multiplication (NumPy) — deterministic, reproducible</div>
+          </div>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Dataset size</p>
+        <div class="option-group" id="data-options" role="group" aria-label="Data processing size">
+          <button class="option-btn" data-value="small"  aria-pressed="false">Small (512²)</button>
+          <button class="option-btn" data-value="medium" aria-pressed="false">Medium (1024²)</button>
+          <button class="option-btn" data-value="large"  aria-pressed="false">Large (2048²)</button>
+        </div>
+
+        <button class="btn-run" id="data-run-btn" type="button">
+          <span class="spinner" id="data-spinner"></span>
+          Run Data Processing Benchmark
+        </button>
+
+        <div class="result-box" id="data-result"></div>
+      </div>
+
+    </div>
+  </section><!-- /benchmark-panel -->
+
+
+  <!-- ------------------------------------------------
+       3. HISTORY PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="history-panel" role="tabpanel" aria-labelledby="tab-history">
+
+    <p class="section-title">Benchmark History</p>
+
+    <!-- Filters -->
+    <div class="filters-bar mb-2">
+
+      <div class="filter-group">
+        <label for="filter-type">Test type</label>
+        <select class="select-input" id="filter-type">
+          <option value="">All types</option>
+          <option value="cpu">CPU</option>
+          <option value="database">Database</option>
+          <option value="data-processing">Data Processing</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label for="filter-env">Environment</label>
+        <input class="select-input" id="filter-env" type="text" placeholder="e.g. Local" style="width:130px" />
+      </div>
+
+      <div class="filter-group">
+        <label for="filter-from">From date</label>
+        <input class="date-input" id="filter-from" type="date" />
+      </div>
+
+      <div class="filter-group">
+        <label for="filter-to">To date</label>
+        <input class="date-input" id="filter-to" type="date" />
+      </div>
+
+      <button class="btn-filter" id="apply-filters-btn" type="button">Apply Filters</button>
+
+    </div>
+
+    <div class="card">
+      <div class="table-wrapper">
+        <table id="history-table" aria-label="Benchmark history">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Type</th>
+              <th>Parameter</th>
+              <th>Exec Time</th>
+              <th>CPU %</th>
+              <th>RAM %</th>
+              <th>Environment</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr><td colspan="8" class="text-muted" style="text-align:center;padding:2rem">
+              Switch to this tab to load results.
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </section><!-- /history-panel -->
+
+
+  <!-- ------------------------------------------------
+       4. COMPARE PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="compare-panel" role="tabpanel" aria-labelledby="tab-compare">
+
+    <p class="section-title">Local vs Cloud Comparison</p>
+
+    <div class="card mb-2" style="font-size:0.8rem;color:var(--text-secondary);line-height:1.8">
+      This table shows aggregated (average) benchmark results grouped by test type and parameter,
+      pivoted by environment name. Only real stored data is shown — no values are invented.
+      <br/>
+      To add a new environment, deploy this application on another host with a different
+      <code>ENVIRONMENT_NAME</code> in <code>.env</code>, run the same benchmarks, and they
+      will appear here automatically (both instances share the same PostgreSQL database, or
+      you can export/import results).
+    </div>
+
+    <div class="card" id="compare-container">
+      <p class="text-muted">Switch to this tab to load comparison data.</p>
+    </div>
+
+  </section><!-- /compare-panel -->
+
+
+  <!-- ------------------------------------------------
+       5. CHARTS PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="charts-panel" role="tabpanel" aria-labelledby="tab-charts">
+
+    <p class="section-title">Performance Charts</p>
+
+    <p id="charts-empty" class="text-muted mb-2" style="display:none">
+      No benchmark data yet. Run some benchmarks first, then switch back to this tab.
+    </p>
+
+    <div class="chart-grid">
+
+      <div class="chart-card">
+        <div class="chart-card__title">CPU Utilisation — CPU Benchmarks</div>
+        <div style="height:240px"><canvas id="cpuChart"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card__title">RAM Utilisation — All Benchmarks</div>
+        <div style="height:240px"><canvas id="ramChart"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card__title">Execution Time by Type</div>
+        <div style="height:240px"><canvas id="execChart"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card__title">Queries / Second — Database Benchmarks</div>
+        <div style="height:240px"><canvas id="qpsChart"></canvas></div>
+      </div>
+
+    </div>
+
+    <div class="chart-card" style="margin-top:1.25rem">
+      <div class="chart-card__title">Benchmark Results Over Time</div>
+      <div style="height:240px"><canvas id="timelineChart"></canvas></div>
+    </div>
+
+  </section><!-- /charts-panel -->
+
+</main><!-- /main-content -->
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container" role="status" aria-live="polite"></div>
+
+<!-- App JS (loaded after DOM) -->
+<script src="/static/js/app.js"></script>
+</body>
+</html>
