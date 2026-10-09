@@ -6,6 +6,8 @@
   <title>Cloud Resource Benchmark</title>
   <meta name="description"
         content="Academic benchmarking dashboard for studying resource utilisation efficiency across local and cloud environments." />
+  <meta property="og:title" content="Cloud Resource Benchmark" />
+  <meta property="og:description" content="Academic benchmarking dashboard for studying resource utilisation efficiency across local and cloud environments." />
 
   <!-- Preconnect to Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -100,7 +102,7 @@
         <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
           <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Hostname</td><td class="mono" id="si-hostname">—</td></tr>
           <tr><td style="color:var(--text-secondary);padding:0.3rem 0">OS</td><td class="mono" id="si-os">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Python</td><td class="mono" id="si-python">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Runtime</td><td class="mono" id="si-python">—</td></tr>
           <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Uptime</td><td class="mono" id="si-uptime">—</td></tr>
         </table>
       </div>
@@ -196,7 +198,7 @@
           <div class="bench-card__icon icon--purple" aria-hidden="true">🧮</div>
           <div>
             <div class="bench-card__title">Data Processing Benchmark</div>
-            <div class="bench-card__desc">Matrix multiplication (NumPy) — deterministic, reproducible</div>
+            <div class="bench-card__desc">Matrix multiplication (Float64) — deterministic, reproducible</div>
           </div>
         </div>
 

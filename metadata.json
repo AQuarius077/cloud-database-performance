@@ -1,0 +1,8 @@
+{
+  "name": "Cloud Resource Benchmark",
+  "description": "Academic benchmarking dashboard for studying resource utilisation efficiency across local and cloud environments.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "permissions": []
+}

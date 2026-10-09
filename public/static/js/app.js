@@ -653,7 +653,7 @@ function renderQpsChart(rows) {
 
 function renderTimelineChart(rows) {
   destroyChart('timelineChart');
-  const sorted = rows.slice().sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const sorted = rows.slice().sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   const labels = sorted.map(r => new Date(r.timestamp).toLocaleDateString());
   const data   = sorted.map(r => r.execution_time);
 
