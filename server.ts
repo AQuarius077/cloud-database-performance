@@ -4,6 +4,20 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import {
+  checkDatabaseConnection,
+  getDatabaseStatus,
+  initDatabaseSchema,
+  seedResearchDataset,
+  runRealSqlBenchmark,
+  runControlledIndexExperiment,
+  checkBenchmarkIndexExists,
+  createBenchmarkIndex,
+  dropBenchmarkIndex,
+  getPersistedBenchmarkResults,
+  BENCHMARK_INDEX_NAME,
+  BenchmarkScenarioType,
+} from './db.js';
 
 dotenv.config();
 
@@ -369,41 +383,47 @@ function runDataBenchmarkService(size: string) {
 // ---------------------------------------------------------------------------
 
 // 1. Health
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    database: 'connected',
+app.get('/api/health', async (req: Request, res: Response) => {
+  const dbCheck = await checkDatabaseConnection();
+  if (dbCheck.connected) {
+    return res.status(200).json({
+      status: 'ok',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return res.status(503).json({
+    status: 'degraded',
+    database: 'unavailable',
+    error: dbCheck.error,
     timestamp: new Date().toISOString(),
   });
 });
 
 // 2. Database Status
-app.get('/api/database/status', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    database: {
+app.get('/api/database/status', async (req: Request, res: Response) => {
+  const status = await getDatabaseStatus();
+  if (status.connected) {
+    return res.status(200).json({
+      status: 'ok',
       connected: true,
-      name: 'benchmark_db',
-      host: 'localhost',
-      port: 5432,
-      version: 'PostgreSQL 16.2 (In-Memory Engine & Persistence)',
-      size: { size_bytes: 52428800, size_pretty: '50 MB' },
-      active_connections: 2,
-      counts: {
-        users_count: researchUsersCount,
-        orders_count: researchOrdersCount,
+      database: {
+        name: status.database_name,
+        version: status.version,
+        size_mb: status.size_mb,
+        active_connections: status.active_connections,
+        counts: status.counts || { users_count: 0, orders_count: 0, results_count: 0 },
       },
-      idx_users_email_exists: indexUsersEmailExists,
-    },
-    redis: {
-      connected: true,
-      host: 'localhost',
-      port: 6379,
-      ping_ms: 0.35,
-      version: '7.2.4 (In-Memory Cache)',
-      used_memory_human: '1.4M',
-      connected_clients: 1,
-    },
+      environment_name: ENVIRONMENT_NAME,
+      server_configuration: SERVER_CONFIGURATION,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return res.status(503).json({
+    status: 'unavailable',
+    connected: false,
+    error: status.error || 'PostgreSQL database is unavailable or DATABASE_URL is not configured.',
+    database: null,
     environment_name: ENVIRONMENT_NAME,
     server_configuration: SERVER_CONFIGURATION,
     timestamp: new Date().toISOString(),
@@ -411,16 +431,68 @@ app.get('/api/database/status', (req: Request, res: Response) => {
 });
 
 // 3. Database Index Management
-app.post('/api/database/index', (req: Request, res: Response) => {
-  const { action = 'status', index_name = 'idx_users_email' } = req.body || {};
-  if (action === 'create') {
-    indexUsersEmailExists = true;
-    return res.json({ status: 'ok', index_name, exists: true, action: 'created' });
-  } else if (action === 'drop') {
-    indexUsersEmailExists = false;
-    return res.json({ status: 'ok', index_name, exists: false, action: 'dropped' });
+app.get('/api/database/index', async (req: Request, res: Response) => {
+  const check = await checkDatabaseConnection();
+  if (!check.connected) {
+    return res.status(503).json({
+      status: 'error',
+      error: 'PostgreSQL database is offline: ' + (check.error || 'DATABASE_URL not configured'),
+      index_name: BENCHMARK_INDEX_NAME,
+      exists: false,
+    });
   }
-  return res.json({ status: 'ok', index_name, exists: indexUsersEmailExists, action: 'checked' });
+  const exists = await checkBenchmarkIndexExists();
+  return res.json({
+    status: 'ok',
+    index_name: BENCHMARK_INDEX_NAME,
+    exists,
+    table: 'db_benchmark_users',
+    column: 'email',
+  });
+});
+
+app.post('/api/database/index', async (req: Request, res: Response) => {
+  const check = await checkDatabaseConnection();
+  if (!check.connected) {
+    return res.status(503).json({
+      status: 'error',
+      error: 'PostgreSQL database is offline: ' + (check.error || 'DATABASE_URL not configured'),
+      index_name: BENCHMARK_INDEX_NAME,
+      exists: false,
+    });
+  }
+
+  const { action = 'status' } = req.body || {};
+  try {
+    if (action === 'create') {
+      const createRes = await createBenchmarkIndex();
+      return res.json({
+        status: 'ok',
+        index_name: BENCHMARK_INDEX_NAME,
+        exists: true,
+        action: 'created',
+        duration_ms: createRes.duration_ms,
+      });
+    } else if (action === 'drop') {
+      const dropRes = await dropBenchmarkIndex();
+      return res.json({
+        status: 'ok',
+        index_name: BENCHMARK_INDEX_NAME,
+        exists: false,
+        action: 'dropped',
+        duration_ms: dropRes.duration_ms,
+      });
+    }
+    const exists = await checkBenchmarkIndexExists();
+    return res.json({
+      status: 'ok',
+      index_name: BENCHMARK_INDEX_NAME,
+      exists,
+      action: 'checked',
+    });
+  } catch (err: any) {
+    return res.status(500).json({ status: 'error', error: err.message });
+  }
 });
 
 // 4. System Info
@@ -456,23 +528,26 @@ app.get('/api/metrics', (req: Request, res: Response) => {
 });
 
 // 6. Dataset Seed
-app.post('/api/benchmark/dataset-seed', (req: Request, res: Response) => {
-  const size = parseInt(req.body?.dataset_size, 10) || 10000;
+app.post('/api/benchmark/dataset-seed', async (req: Request, res: Response) => {
+  const rawSize = req.body?.dataset_size;
+  const size = Number(rawSize);
+
   if (![10000, 100000, 1000000].includes(size)) {
-    return res.status(400).json({ error: 'dataset_size must be 10000, 100000, or 1000000' });
+    return res.status(400).json({
+      status: 'error',
+      error: 'Invalid dataset_size. Supported dataset sizes are strictly 10000, 100000, or 1000000.',
+    });
   }
 
-  researchUsersCount = size;
-  researchOrdersCount = size;
-
-  res.json({
-    status: 'ok',
-    dataset_size: size,
-    users_count: size,
-    orders_count: size,
-    execution_time_seconds: 0.085,
-    message: `Successfully generated ${size.toLocaleString()} users and ${size.toLocaleString()} orders`,
-  });
+  try {
+    const result = await seedResearchDataset(size);
+    return res.status(200).json(result);
+  } catch (err: any) {
+    return res.status(503).json({
+      status: 'error',
+      error: err.message || 'Dataset seeding failed',
+    });
+  }
 });
 
 // 7. CPU Benchmark
@@ -518,46 +593,225 @@ app.post('/api/benchmark/cpu', async (req: Request, res: Response) => {
   }
 });
 
-// 8. Database Benchmark
-app.post('/api/benchmark/database', (req: Request, res: Response) => {
-  const queryCount = parseInt(req.body?.query_count, 10);
-  if (![100, 1000, 10000].includes(queryCount)) {
-    return res.status(400).json({ error: 'query_count must be 100, 1000, or 10000' });
+// 8. Database Benchmark (Real PostgreSQL execution)
+app.post('/api/benchmark/database', async (req: Request, res: Response) => {
+  const dbCheck = await checkDatabaseConnection();
+  if (!dbCheck.connected) {
+    return res.status(503).json({
+      status: 'unavailable',
+      error: 'PostgreSQL database is offline: ' + (dbCheck.error || 'DATABASE_URL not configured. Connect a real database to run benchmarks.'),
+    });
   }
 
+  const scenario = (req.body?.scenario || 'filter_email') as BenchmarkScenarioType;
+  const validScenarios: BenchmarkScenarioType[] = [
+    'filter_email',
+    'by_id',
+    'filter_sort_created',
+    'count_status',
+    'index_comparison',
+  ];
+
+  if (!validScenarios.includes(scenario)) {
+    return res.status(400).json({
+      error: `Invalid scenario '${scenario}'. Must be one of: ${validScenarios.join(', ')}`,
+    });
+  }
+
+  // Determine repetitions
+  let repetitions = 30;
+  if (req.body?.repetitions) {
+    repetitions = Math.max(1, Math.min(1000, parseInt(req.body.repetitions, 10) || 30));
+  } else if (req.body?.query_count) {
+    const qc = parseInt(req.body.query_count, 10);
+    if (qc <= 100) repetitions = 25;
+    else if (qc <= 1000) repetitions = 50;
+    else repetitions = 100;
+  }
+
+  const mem = getMemoryStats();
+  const cpuPct = getCpuUsagePercent();
+
   try {
-    const result = runDbBenchmarkService(queryCount);
-    const mem = getMemoryStats();
+    if (scenario === 'index_comparison') {
+      const expRes = await runControlledIndexExperiment(Math.min(repetitions, 100));
+
+      const newRecordA: BenchmarkRecord = {
+        id: expRes.configuration_a_unindexed.persisted_id,
+        environment_name: ENVIRONMENT_NAME,
+        server_configuration: SERVER_CONFIGURATION,
+        test_type: 'database',
+        test_parameter: `index_exp_unindexed (${expRes.repetitions}q)`,
+        execution_time: expRes.configuration_a_unindexed.stats.total_duration_ms / 1000,
+        cpu_usage: cpuPct,
+        memory_usage: mem.ram_percent,
+        extra_metrics: {
+          index_name: null,
+          explain_node_type: expRes.configuration_a_unindexed.explain.node_type,
+          avg_query_time_ms: expRes.configuration_a_unindexed.stats.mean_ms,
+          queries_per_second: expRes.configuration_a_unindexed.stats.qps,
+        },
+        timestamp: expRes.timestamp,
+        experiment_type: 'index_comparison_unindexed',
+        dataset_size: expRes.dataset_size,
+      };
+      const newRecordB: BenchmarkRecord = {
+        id: expRes.configuration_b_indexed.persisted_id,
+        environment_name: ENVIRONMENT_NAME,
+        server_configuration: SERVER_CONFIGURATION,
+        test_type: 'database',
+        test_parameter: `index_exp_indexed (${expRes.repetitions}q)`,
+        execution_time: expRes.configuration_b_indexed.stats.total_duration_ms / 1000,
+        cpu_usage: cpuPct,
+        memory_usage: mem.ram_percent,
+        extra_metrics: {
+          index_name: expRes.configuration_b_indexed.index_name,
+          explain_node_type: expRes.configuration_b_indexed.explain.node_type,
+          avg_query_time_ms: expRes.configuration_b_indexed.stats.mean_ms,
+          queries_per_second: expRes.configuration_b_indexed.stats.qps,
+        },
+        timestamp: expRes.timestamp,
+        experiment_type: 'index_comparison_indexed',
+        dataset_size: expRes.dataset_size,
+      };
+      benchmarkResults.unshift(newRecordB);
+      benchmarkResults.unshift(newRecordA);
+
+      return res.json({
+        ...expRes,
+        id: expRes.configuration_b_indexed.persisted_id,
+        scenario: 'index_comparison',
+        execution_time: Math.round(((expRes.configuration_a_unindexed.stats.total_duration_ms + expRes.configuration_b_indexed.stats.total_duration_ms) / 1000) * 10000) / 10000,
+        avg_query_time_ms: expRes.configuration_b_indexed.stats.mean_ms,
+        queries_per_second: expRes.configuration_b_indexed.stats.qps,
+        cpu_percent: cpuPct,
+        ram_before_mb: mem.used_ram_mb,
+        ram_after_mb: mem.used_ram_mb,
+        environment_name: ENVIRONMENT_NAME,
+        server_configuration: SERVER_CONFIGURATION,
+      });
+    }
+
+    // Standard Real SQL Benchmark Scenario
+    const result = await runRealSqlBenchmark(scenario, repetitions);
+
     const newRecord: BenchmarkRecord = {
-      id: recordCounter++,
+      id: result.persisted_id,
       environment_name: ENVIRONMENT_NAME,
       server_configuration: SERVER_CONFIGURATION,
       test_type: 'database',
-      test_parameter: `${queryCount}q`,
-      execution_time: result.execution_time,
-      cpu_usage: result.cpu_percent,
+      test_parameter: `${result.scenario} (${result.stats.count}q)`,
+      execution_time: result.stats.total_duration_ms / 1000,
+      cpu_usage: cpuPct,
       memory_usage: mem.ram_percent,
       extra_metrics: {
-        avg_query_time_ms: result.avg_query_time_ms,
-        queries_per_second: result.queries_per_second,
-        ram_before_mb: result.ram_before_mb,
-        ram_after_mb: result.ram_after_mb,
+        scenario: result.scenario,
+        avg_query_time_ms: result.stats.mean_ms,
+        median_latency_ms: result.stats.median_ms,
+        p95_latency_ms: result.stats.p95_ms,
+        min_latency_ms: result.stats.min_ms,
+        max_latency_ms: result.stats.max_ms,
+        queries_per_second: result.stats.qps,
+        explain_node_type: result.explain_diagnostic.node_type,
+        server_execution_time_ms: result.explain_diagnostic.execution_time_ms,
+        ram_before_mb: mem.used_ram_mb,
+        ram_after_mb: mem.used_ram_mb,
       },
-      timestamp: new Date().toISOString(),
-      experiment_type: 'database',
-      dataset_size: queryCount,
+      timestamp: result.timestamp,
+      experiment_type: result.scenario,
+      dataset_size: result.dataset_size,
     };
     benchmarkResults.unshift(newRecord);
 
-    res.json({
-      ...result,
-      id: newRecord.id,
-      timestamp: newRecord.timestamp,
+    return res.json({
+      id: result.persisted_id,
+      scenario: result.scenario,
+      query_sql: result.query_sql,
+      sample_params: result.sample_params,
+      dataset_size: result.dataset_size,
+      execution_time: Math.round((result.stats.total_duration_ms / 1000) * 10000) / 10000,
+      avg_query_time_ms: result.stats.mean_ms,
+      queries_per_second: result.stats.qps,
+      cpu_percent: cpuPct,
+      ram_before_mb: mem.used_ram_mb,
+      ram_after_mb: mem.used_ram_mb,
+      stats: result.stats,
+      explain_diagnostic: result.explain_diagnostic,
       environment_name: ENVIRONMENT_NAME,
       server_configuration: SERVER_CONFIGURATION,
+      timestamp: result.timestamp,
+      methodology_notes: result.methodology_notes,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Database benchmark failed' });
+    return res.status(500).json({ error: err.message || 'Real database benchmark failed' });
+  }
+});
+
+// 8b. Controlled Index Optimization Experiment Endpoint
+app.post('/api/benchmark/database/compare-index', async (req: Request, res: Response) => {
+  const dbCheck = await checkDatabaseConnection();
+  if (!dbCheck.connected) {
+    return res.status(503).json({
+      status: 'unavailable',
+      error: 'PostgreSQL database is offline: ' + (dbCheck.error || 'DATABASE_URL not configured'),
+    });
+  }
+
+  const repetitions = Math.max(5, Math.min(200, parseInt(req.body?.repetitions || '20', 10)));
+  const mem = getMemoryStats();
+  const cpuPct = getCpuUsagePercent();
+
+  try {
+    const expRes = await runControlledIndexExperiment(repetitions);
+
+    benchmarkResults.unshift({
+      id: expRes.configuration_a_unindexed.persisted_id,
+      environment_name: ENVIRONMENT_NAME,
+      server_configuration: SERVER_CONFIGURATION,
+      test_type: 'database',
+      test_parameter: `index_exp_unindexed (${expRes.repetitions}q)`,
+      execution_time: expRes.configuration_a_unindexed.stats.total_duration_ms / 1000,
+      cpu_usage: cpuPct,
+      memory_usage: mem.ram_percent,
+      extra_metrics: {
+        index_name: null,
+        explain_node_type: expRes.configuration_a_unindexed.explain.node_type,
+        avg_query_time_ms: expRes.configuration_a_unindexed.stats.mean_ms,
+        queries_per_second: expRes.configuration_a_unindexed.stats.qps,
+      },
+      timestamp: expRes.timestamp,
+      experiment_type: 'index_comparison_unindexed',
+      dataset_size: expRes.dataset_size,
+    });
+
+    benchmarkResults.unshift({
+      id: expRes.configuration_b_indexed.persisted_id,
+      environment_name: ENVIRONMENT_NAME,
+      server_configuration: SERVER_CONFIGURATION,
+      test_type: 'database',
+      test_parameter: `index_exp_indexed (${expRes.repetitions}q)`,
+      execution_time: expRes.configuration_b_indexed.stats.total_duration_ms / 1000,
+      cpu_usage: cpuPct,
+      memory_usage: mem.ram_percent,
+      extra_metrics: {
+        index_name: expRes.configuration_b_indexed.index_name,
+        explain_node_type: expRes.configuration_b_indexed.explain.node_type,
+        avg_query_time_ms: expRes.configuration_b_indexed.stats.mean_ms,
+        queries_per_second: expRes.configuration_b_indexed.stats.qps,
+      },
+      timestamp: expRes.timestamp,
+      experiment_type: 'index_comparison_indexed',
+      dataset_size: expRes.dataset_size,
+    });
+
+    return res.json({
+      status: 'ok',
+      environment_name: ENVIRONMENT_NAME,
+      server_configuration: SERVER_CONFIGURATION,
+      ...expRes,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Controlled index experiment failed' });
   }
 });
 
@@ -604,11 +858,46 @@ app.post('/api/benchmark/data-processing', (req: Request, res: Response) => {
 });
 
 // 10. Benchmark History
-app.get('/api/benchmarks', (req: Request, res: Response) => {
+app.get('/api/benchmarks', async (req: Request, res: Response) => {
   const { test_type, environment_name, date_from, date_to } = req.query as Record<string, string>;
   const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 200));
 
-  let filtered = [...benchmarkResults];
+  let combined = [...benchmarkResults];
+
+  // Retrieve real persisted records from PostgreSQL if available
+  try {
+    const persisted = await getPersistedBenchmarkResults(limit);
+    if (persisted && persisted.length > 0) {
+      const existingIds = new Set(combined.map((c) => c.id));
+      for (const p of persisted) {
+        if (!existingIds.has(p.id)) {
+          combined.push({
+            id: p.id,
+            environment_name: p.environment_name || ENVIRONMENT_NAME,
+            server_configuration: SERVER_CONFIGURATION,
+            test_type: (p.test_type === 'database' || p.test_type?.startsWith('index_') || p.test_type?.startsWith('filter_') || p.test_type?.startsWith('sql_'))
+              ? 'database'
+              : (p.test_type as any) || 'database',
+            test_parameter: p.test_parameter || 'sql_query',
+            execution_time: Number(p.execution_time) || 0,
+            cpu_usage: Number(p.cpu_usage) || 0,
+            memory_usage: Number(p.memory_usage) || 0,
+            extra_metrics: p.extra_metrics,
+            timestamp: p.timestamp,
+            experiment_type: p.test_type,
+          });
+          existingIds.add(p.id);
+        }
+      }
+    }
+  } catch {
+    // If DB unavailable, gracefully proceed with in-memory records
+  }
+
+  // Sort descending by timestamp
+  combined.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  let filtered = combined;
 
   if (test_type) {
     filtered = filtered.filter((r) => r.test_type === test_type || r.experiment_type === test_type);
@@ -682,6 +971,18 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // Start server on 0.0.0.0:3000
-app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, async () => {
   console.log(`Cloud Resource Benchmark server running on http://${HOST}:${PORT}`);
+  try {
+    const conn = await checkDatabaseConnection();
+    if (conn.connected) {
+      console.log('[PostgreSQL]: Connection verified. Running schema initialization...');
+      const schemaInit = await initDatabaseSchema();
+      console.log(`[PostgreSQL]: ${schemaInit.message}`);
+    } else {
+      console.log(`[PostgreSQL]: Offline (${conn.error}). Real database endpoints will report unavailable until DATABASE_URL is configured.`);
+    }
+  } catch (err: any) {
+    console.error('[PostgreSQL Initialization Error]:', err.message);
+  }
 });

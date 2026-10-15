@@ -20,14 +20,18 @@
 // ============================================================
 
 const API = {
-  systemInfo:  '/api/system-info',
-  metrics:     '/api/metrics',
-  health:      '/api/health',
-  benchmarks:  '/api/benchmarks',
-  compare:     '/api/benchmarks/compare',
-  cpuBench:    '/api/benchmark/cpu',
-  dbBench:     '/api/benchmark/database',
-  dataBench:   '/api/benchmark/data-processing',
+  systemInfo:     '/api/system-info',
+  metrics:        '/api/metrics',
+  health:         '/api/health',
+  databaseStatus: '/api/database/status',
+  index:          '/api/database/index',
+  indexCompare:   '/api/benchmark/database/compare-index',
+  datasetSeed:    '/api/benchmark/dataset-seed',
+  benchmarks:     '/api/benchmarks',
+  compare:        '/api/benchmarks/compare',
+  cpuBench:       '/api/benchmark/cpu',
+  dbBench:        '/api/benchmark/database',
+  dataBench:      '/api/benchmark/data-processing',
 };
 
 const METRICS_INTERVAL_MS = 2000;
@@ -282,43 +286,120 @@ async function runCpuBenchmark() {
 }
 
 // ============================================================
-// Database Benchmark
+// Real Database Benchmark (SQL Scenarios)
 // ============================================================
 
 async function runDbBenchmark() {
-  const queryCount = parseInt(getSelectedOption('db-options'), 10);
-  if (!queryCount) { showToast('Select a query count first.', 'error'); return; }
+  const scenario = getSelectedOption('db-scenario-options') || 'filter_email';
+  const repetitions = parseInt(getSelectedOption('db-options') || '25', 10);
 
   const btn = el('db-run-btn');
   const spinner = el('db-spinner');
   btn.disabled = true;
   spinner.classList.add('visible');
-  showToast(`Running ${queryCount.toLocaleString()} queries …`, 'info');
+  showToast(`Running real PostgreSQL benchmark (${scenario}, ${repetitions} repetitions) …`, 'info');
 
   try {
     const result = await apiFetch(API.dbBench, {
       method: 'POST',
-      body: JSON.stringify({ query_count: queryCount }),
+      body: JSON.stringify({ scenario, repetitions }),
     });
 
-    showResult('db-result', [
-      ['Total time',        result.execution_time.toFixed(4) + ' s'],
-      ['Avg query time',    result.avg_query_time_ms.toFixed(3) + ' ms'],
-      ['Queries/second',    result.queries_per_second.toFixed(1)],
-      ['CPU usage',         result.cpu_percent.toFixed(1) + '%'],
-      ['RAM before',        formatBytes(result.ram_before_mb)],
-      ['RAM after',         formatBytes(result.ram_after_mb)],
-      ['Environment',       result.environment_name],
-      ['Config',            result.server_configuration],
-      ['Saved ID',          '#' + result.id],
-    ]);
-    showToast('Database benchmark complete!', 'success');
+    const rows = [
+      ['Scenario',          result.scenario],
+      ['Repetitions',       result.stats.count + ' queries'],
+      ['Client Avg Latency', result.stats.mean_ms.toFixed(2) + ' ms'],
+      ['P95 Latency',       result.stats.p95_ms.toFixed(2) + ' ms'],
+      ['Median (P50)',      result.stats.median_ms.toFixed(2) + ' ms'],
+      ['Min / Max',         `${result.stats.min_ms.toFixed(2)} ms / ${result.stats.max_ms.toFixed(2)} ms`],
+      ['Throughput (QPS)',  result.stats.qps.toFixed(1)],
+    ];
+
+    if (result.explain_diagnostic) {
+      rows.push(['EXPLAIN Plan', result.explain_diagnostic.node_type]);
+      rows.push(['Server Exec Time', result.explain_diagnostic.execution_time_ms.toFixed(3) + ' ms']);
+      rows.push(['Server Plan Time', result.explain_diagnostic.planning_time_ms.toFixed(3) + ' ms']);
+    }
+
+    rows.push(['Total Time',       result.execution_time.toFixed(4) + ' s']);
+    rows.push(['CPU / RAM',        `${result.cpu_percent.toFixed(1)}% / ${formatBytes(result.ram_before_mb)}`]);
+    rows.push(['Persisted ID',     '#' + result.id]);
+
+    showResult('db-result', rows);
+    showToast('Database benchmark finished and persisted to PostgreSQL!', 'success');
+    loadDatabaseStatus();
 
   } catch (e) {
+    showResult('db-result', [
+      ['Status', 'Failed', 'result-box__val--warn'],
+      ['Error Detail', e.message],
+    ]);
     showToast('Database benchmark failed: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
     spinner.classList.remove('visible');
+  }
+}
+
+// ============================================================
+// Controlled Index Optimization Experiment
+// ============================================================
+
+async function runIndexBenchmark() {
+  const repetitions = parseInt(getSelectedOption('index-exp-options') || '15', 10);
+
+  const btn = el('index-run-btn');
+  const spinner = el('index-spinner');
+  btn.disabled = true;
+  spinner.classList.add('visible');
+  showToast(`Starting controlled index experiment (${repetitions} unindexed + ${repetitions} indexed queries) …`, 'info');
+
+  try {
+    const result = await apiFetch(API.indexCompare, {
+      method: 'POST',
+      body: JSON.stringify({ repetitions }),
+    });
+
+    const speedup = result.comparison.speedup_multiplier;
+    const speedupClass = speedup > 1.2 ? 'result-box__val--good' : '';
+
+    showResult('index-result', [
+      ['Speedup Multiplier',  `${speedup}x Faster`, speedupClass],
+      ['Latency Reduction',   `${result.comparison.latency_reduction_pct}%`, speedupClass],
+      ['Server Time Speedup', `${result.comparison.server_time_speedup}x`],
+      ['Config A (Unindexed)', `${result.configuration_a_unindexed.explain.node_type} (${result.configuration_a_unindexed.stats.mean_ms.toFixed(2)} ms)`],
+      ['Config B (Indexed)',   `${result.configuration_b_indexed.explain.node_type} (${result.configuration_b_indexed.stats.mean_ms.toFixed(2)} ms)`],
+      ['Index Build Duration', `${result.configuration_b_indexed.index_creation_duration_ms} ms`],
+      ['Queries Tested',      `${result.repetitions} queries per config`],
+      ['Persisted IDs',       `#${result.configuration_a_unindexed.persisted_id} & #${result.configuration_b_indexed.persisted_id}`],
+    ]);
+
+    showToast(`Experiment complete: ${result.comparison.summary}`, 'success');
+    loadDatabaseStatus();
+
+  } catch (e) {
+    showResult('index-result', [
+      ['Status', 'Failed', 'result-box__val--warn'],
+      ['Error Detail', e.message],
+    ]);
+    showToast('Index experiment failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    spinner.classList.remove('visible');
+  }
+}
+
+async function handleIndexAction(action) {
+  showToast(`${action === 'create' ? 'Creating' : 'Dropping'} index idx_db_benchmark_users_email …`, 'info');
+  try {
+    const res = await apiFetch(API.index, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+    showToast(`Index ${res.action} successfully (${res.duration_ms || 0} ms)!`, 'success');
+    loadDatabaseStatus();
+  } catch (err) {
+    showToast(`Index operation failed: ${err.message}`, 'error');
   }
 }
 
@@ -678,6 +759,113 @@ function renderTimelineChart(rows) {
 }
 
 // ============================================================
+// Real Database Status (queried from PostgreSQL API)
+// ============================================================
+
+async function loadDatabaseStatus() {
+  const badge = el('db-status-badge');
+  try {
+    const res = await fetch(API.databaseStatus);
+    const d = await res.json();
+
+    if (res.ok && d.connected && d.database) {
+      if (badge) badge.innerHTML = '<span class="badge badge--db" style="background:rgba(16,185,129,0.15);color:var(--accent-green)">Connected</span>';
+      setText('db-stat-name', d.database.name || '—');
+      setText('db-stat-version', (d.database.version || '').split(' on ')[0] || 'PostgreSQL');
+      setText('db-stat-size', `${d.database.size_mb} MB`);
+      setText('db-stat-conns', `${d.database.active_connections}`);
+      setText('db-stat-users', d.database.counts ? Number(d.database.counts.users_count).toLocaleString() : '0');
+      setText('db-stat-orders', d.database.counts ? Number(d.database.counts.orders_count).toLocaleString() : '0');
+      setText('db-stat-results', d.database.counts ? Number(d.database.counts.results_count).toLocaleString() : '0');
+
+      // Check index status
+      try {
+        const idxRes = await fetch(API.index);
+        const idxData = await idxRes.json();
+        if (idxData.status === 'ok') {
+          const indexText = idxData.exists ? 'Present (Active)' : 'Not Created';
+          setText('db-stat-index', indexText);
+          const statusEl = el('index-toggle-status');
+          if (statusEl) {
+            statusEl.textContent = idxData.exists ? 'ACTIVE (Index Scan Enabled)' : 'DROPPED (Seq Scan Only)';
+            statusEl.style.color = idxData.exists ? 'var(--accent-green)' : 'var(--accent-orange)';
+          }
+        }
+      } catch {
+        setText('db-stat-index', '—');
+      }
+
+    } else {
+      if (badge) badge.innerHTML = '<span class="badge badge--cpu" style="background:rgba(239,68,68,0.15);color:var(--accent-red)">Disconnected</span>';
+      setText('db-stat-name', 'Offline');
+      setText('db-stat-version', d.error || 'DATABASE_URL not configured');
+      setText('db-stat-size', '—');
+      setText('db-stat-conns', '0');
+      setText('db-stat-users', '—');
+      setText('db-stat-orders', '—');
+      setText('db-stat-results', '—');
+      setText('db-stat-index', '—');
+      const statusEl = el('index-toggle-status');
+      if (statusEl) {
+        statusEl.textContent = 'Offline';
+        statusEl.style.color = 'var(--text-secondary)';
+      }
+    }
+  } catch (err) {
+    if (badge) badge.innerHTML = '<span class="badge badge--cpu" style="background:rgba(239,68,68,0.15);color:var(--accent-red)">Offline</span>';
+    setText('db-stat-name', 'Unavailable');
+    setText('db-stat-version', err.message);
+  }
+}
+
+// ============================================================
+// Research Dataset Seeding (generate_series in PostgreSQL)
+// ============================================================
+
+async function runDatasetSeed() {
+  const size = parseInt(getSelectedOption('seed-options'), 10);
+  if (!size) {
+    showToast('Select a dataset size first.', 'error');
+    return;
+  }
+
+  const btn = el('seed-run-btn');
+  const spinner = el('seed-spinner');
+  btn.disabled = true;
+  spinner?.classList.add('visible');
+  showToast(`Starting PostgreSQL dataset seeding (${size.toLocaleString()} rows) …`, 'info');
+
+  try {
+    const result = await apiFetch(API.datasetSeed, {
+      method: 'POST',
+      body: JSON.stringify({ dataset_size: size }),
+    });
+
+    showResult('seed-result', [
+      ['Status',              result.status === 'ok' ? 'Success' : 'Error', result.status === 'ok' ? 'result-box__val--good' : 'result-box__val--warn'],
+      ['Dataset Size',        result.dataset_size.toLocaleString() + ' rows'],
+      ['Users Inserted',      result.users_inserted.toLocaleString()],
+      ['Orders Inserted',     result.orders_inserted.toLocaleString()],
+      ['Insertion Time',      result.insertion_time_ms + ' ms'],
+      ['Database Engine',     'PostgreSQL (generate_series)'],
+    ]);
+
+    showToast(`Seeded ${result.users_inserted.toLocaleString()} users & orders in ${result.insertion_time_ms} ms!`, 'success');
+    loadDatabaseStatus();
+  } catch (e) {
+    showResult('seed-result', [
+      ['Status',       'Failed', 'result-box__val--warn'],
+      ['Error Detail', e.message],
+      ['Resolution',   'Configure DATABASE_URL with a reachable PostgreSQL instance.'],
+    ]);
+    showToast('Dataset seeding failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    spinner?.classList.remove('visible');
+  }
+}
+
+// ============================================================
 // Initialise everything on DOMContentLoaded
 // ============================================================
 
@@ -685,12 +873,17 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initOptionGroups();
   loadSystemInfo();
+  loadDatabaseStatus();
   startMetricsPolling();
 
   // Wire benchmark buttons
-  el('cpu-run-btn')?.addEventListener('click',  runCpuBenchmark);
-  el('db-run-btn')?.addEventListener('click',   runDbBenchmark);
-  el('data-run-btn')?.addEventListener('click', runDataBenchmark);
+  el('cpu-run-btn')?.addEventListener('click',    runCpuBenchmark);
+  el('db-run-btn')?.addEventListener('click',     runDbBenchmark);
+  el('index-run-btn')?.addEventListener('click',  runIndexBenchmark);
+  el('btn-create-index')?.addEventListener('click', () => handleIndexAction('create'));
+  el('btn-drop-index')?.addEventListener('click',   () => handleIndexAction('drop'));
+  el('data-run-btn')?.addEventListener('click',   runDataBenchmark);
+  el('seed-run-btn')?.addEventListener('click',   runDatasetSeed);
 
   // History filter button
   el('apply-filters-btn')?.addEventListener('click', loadHistory);

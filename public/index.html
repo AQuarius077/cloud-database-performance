@@ -131,6 +131,40 @@
 
     </div>
 
+    <!-- Real PostgreSQL Database Status -->
+    <p class="section-title">PostgreSQL Database Status <small style="font-size:0.65rem;color:var(--text-muted);text-transform:none;">(Live pg.Pool Status)</small></p>
+    <div class="grid-3 mb-3">
+
+      <div class="card">
+        <div class="card__title">Connection &amp; Server</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Status</td><td id="db-status-badge"><span class="badge badge--data">Checking...</span></td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Database</td><td class="mono" id="db-stat-name">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Version</td><td class="mono" id="db-stat-version" style="font-size:0.72rem">—</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card__title">Storage &amp; Activity</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Size on Disk</td><td class="mono text-cyan" id="db-stat-size">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Active Connections</td><td class="mono" id="db-stat-conns">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Connection Pool</td><td class="mono" id="db-stat-pool">pg.Pool (max: 20)</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card__title">Research Tables (Row Counts)</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:55%">db_benchmark_users</td><td class="mono text-green" id="db-stat-users">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">db_benchmark_orders</td><td class="mono text-green" id="db-stat-orders">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">benchmark_results</td><td class="mono" id="db-stat-results">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">idx_users_email</td><td class="mono" id="db-stat-index">—</td></tr>
+        </table>
+      </div>
+
+    </div>
+
   </section><!-- /overview-panel -->
 
 
@@ -172,24 +206,67 @@
         <div class="bench-card__header">
           <div class="bench-card__icon icon--cyan" aria-hidden="true">🗄️</div>
           <div>
-            <div class="bench-card__title">Database Benchmark</div>
-            <div class="bench-card__desc">Parameterised SELECT queries against 50 000-row PostgreSQL table</div>
+            <div class="bench-card__title">Real SQL Database Benchmark</div>
+            <div class="bench-card__desc">Parameterized SQL queries executed against db_benchmark_users table</div>
           </div>
         </div>
 
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Query count</p>
-        <div class="option-group" id="db-options" role="group" aria-label="Database query count">
-          <button class="option-btn" data-value="100"   aria-pressed="false">100 queries</button>
-          <button class="option-btn" data-value="1000"  aria-pressed="false">1 000 queries</button>
-          <button class="option-btn" data-value="10000" aria-pressed="false">10 000 queries</button>
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Benchmark Scenario</p>
+        <div class="option-group" id="db-scenario-options" role="group" aria-label="SQL Benchmark Scenario">
+          <button class="option-btn" data-value="filter_email" aria-pressed="false">Filter Email</button>
+          <button class="option-btn" data-value="by_id" aria-pressed="false">By Primary Key</button>
+          <button class="option-btn" data-value="filter_sort_created" aria-pressed="false">Filter & Sort</button>
+          <button class="option-btn" data-value="count_status" aria-pressed="false">Count Matching</button>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Measured Repetitions</p>
+        <div class="option-group" id="db-options" role="group" aria-label="Database repetitions">
+          <button class="option-btn" data-value="25"  aria-pressed="false">25 queries</button>
+          <button class="option-btn" data-value="50"  aria-pressed="false">50 queries</button>
+          <button class="option-btn" data-value="100" aria-pressed="false">100 queries</button>
         </div>
 
         <button class="btn-run" id="db-run-btn" type="button">
           <span class="spinner" id="db-spinner"></span>
-          Run Database Benchmark
+          Run Real Database Benchmark
         </button>
 
         <div class="result-box" id="db-result"></div>
+      </div>
+
+      <!-- Controlled Index Optimization Experiment Card -->
+      <div class="bench-card" id="index-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--blue" aria-hidden="true">⚡</div>
+          <div>
+            <div class="bench-card__title">Controlled Index Experiment</div>
+            <div class="bench-card__desc">Configuration A (Seq Scan) vs Configuration B (Index Scan)</div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;padding:0.4rem 0.6rem;background:var(--bg-secondary);border-radius:var(--radius-sm);border:1px solid var(--border);">
+          <span style="font-size:0.75rem;color:var(--text-secondary);">Index Status (email):</span>
+          <span id="index-toggle-status" class="mono text-cyan" style="font-size:0.75rem;font-weight:600;">Checking…</span>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Repetitions Per Configuration</p>
+        <div class="option-group" id="index-exp-options" role="group" aria-label="Index experiment repetitions">
+          <button class="option-btn" data-value="15" aria-pressed="false">15 queries</button>
+          <button class="option-btn" data-value="30" aria-pressed="false">30 queries</button>
+          <button class="option-btn" data-value="60" aria-pressed="false">60 queries</button>
+        </div>
+
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
+          <button class="btn-filter" id="btn-create-index" type="button" style="flex:1;padding:0.5rem 0.2rem;font-size:0.75rem;">Create Index</button>
+          <button class="btn-filter" id="btn-drop-index" type="button" style="flex:1;padding:0.5rem 0.2rem;font-size:0.75rem;border-color:var(--accent-orange);color:var(--accent-orange);">Drop Index</button>
+        </div>
+
+        <button class="btn-run" id="index-run-btn" type="button">
+          <span class="spinner" id="index-spinner"></span>
+          Run Controlled Index Comparison
+        </button>
+
+        <div class="result-box" id="index-result"></div>
       </div>
 
       <!-- Data Processing Benchmark -->
@@ -215,6 +292,31 @@
         </button>
 
         <div class="result-box" id="data-result"></div>
+      </div>
+
+      <!-- Dataset Seeding Benchmark Card -->
+      <div class="bench-card" id="seed-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--green" aria-hidden="true">🌱</div>
+          <div>
+            <div class="bench-card__title">Dataset Seeding</div>
+            <div class="bench-card__desc">Generate research rows in PostgreSQL (generate_series)</div>
+          </div>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Target Dataset Size</p>
+        <div class="option-group" id="seed-options" role="group" aria-label="Dataset row count">
+          <button class="option-btn" data-value="10000" aria-pressed="false">10 000 rows</button>
+          <button class="option-btn" data-value="100000" aria-pressed="false">100 000 rows</button>
+          <button class="option-btn" data-value="1000000" aria-pressed="false">1 000 000 rows</button>
+        </div>
+
+        <button class="btn-run" id="seed-run-btn" type="button">
+          <span class="spinner" id="seed-spinner"></span>
+          Seed PostgreSQL Dataset
+        </button>
+
+        <div class="result-box" id="seed-result"></div>
       </div>
 
     </div>
