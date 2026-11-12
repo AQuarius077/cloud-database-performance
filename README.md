@@ -1,111 +1,109 @@
-# Study of Cloud Database Performance Optimization Methods
-> **Бұлттық деректер базасының өнімділігін оңтайландыру әдістерін зерттеу**  
-> Academic Research & Benchmarking Platform for Cloud Database Resource & Performance Efficiency
+# Бұлттық деректер базасының өнімділігін оңтайландыру әдістерін зерттеу
+> **Research on Cloud Database Performance Optimization Methods**  
+> Магистрлік ғылыми-зерттеу платформасы / Master's Academic Research & Performance Benchmarking Platform
 
 ---
 
-## Architecture Overview
+## 1. Архитектуралық шолу (Architecture Overview)
 
 ```
-Browser ──HTTP──► Express (TypeScript / Node.js 22)
-                        │
-                pg.Pool (Connection Pooling)
-                        │
-             PostgreSQL 16+ Database
-             (db_benchmark_users, db_benchmark_orders, benchmark_results)
+┌────────────────────────────────────────────────────────┐
+│  Веб-интерфейс (Research Dashboard, HTML5/CSS3/Chart.js)│
+└───────────────────────────┬────────────────────────────┘
+                            │ HTTP / REST API
+┌───────────────────────────▼────────────────────────────┐
+│   Node.js 22 & Express Сервері (TypeScript, server.ts) │
+└───────────────────────────┬────────────────────────────┘
+                            │ pg.Pool (Connection Pooling, max: 20, TLS/SSL)
+┌───────────────────────────▼────────────────────────────┐
+│      Neon Serverless PostgreSQL (Бұлттық деректер қоры)│
+│                                                        │
+│  • db_benchmark_users (id, name, email, status, ...)   │
+│  • db_benchmark_orders (id, user_id, amount, ...)      │
+│  • benchmark_results (эксперимент нәтижелері, JSONB)   │
+│  • idx_db_benchmark_users_email (B-tree)               │
+└────────────────────────────────────────────────────────┘
 ```
 
-- **Frontend**: Clean single-page dashboard with real-time hardware metrics polling (CPU & RAM), live database connection status, research dataset seeder, and Chart.js analytics.
-- **Backend**: Express REST API running on Node.js 22 with full TypeScript support (`server.ts`).
-- **Database Layer**: Official PostgreSQL driver (`pg`) utilizing connection pooling (`pg.Pool`) configured via environment variables.
+- **Frontend**: Жоғары дәлдіктегі интерактивті зерттеу панелі (Қазақ тілінде), Chart.js аналитикалық графиктері, нақты уақыттағы хост метрикалары және академиялық есеп генераторы.
+- **Backend**: Node.js 22 және Express негізіндегі толық параметрленген REST API (`server.ts`).
+- **Database Layer**: Ресми `pg.Pool` кітапханасы, TLS/SSL шифрланған қосылым, транзакциялық генерация (`generate_series`), `EXPLAIN (ANALYZE, BUFFERS)` жоспар талдаушысы.
 
 ---
 
-## Database Configuration
+## 2. Деректер базасын баптау (Database Configuration)
 
-PostgreSQL is configured strictly through environment variables. Credentials are never exposed to the client.
+Орта параметрлерін `.env` файлында немесе веб-интерфейстегі жылдам қосылу панелінде орнатуға болады:
 
-### Environment Variables
+```env
+PORT=3000
+ENVIRONMENT_NAME=Cloud-Neon
+SERVER_CONFIGURATION=Neon Serverless PostgreSQL (Dynamic vCPU, TLS/SSL)
 
-Configure these in your `.env` file (see `.env.example`):
-
-| Variable | Description | Default | Example |
-|---|---|---|---|
-| `PORT` | Web server listening port | `3000` | `3000` |
-| `DATABASE_URL` | PostgreSQL connection string | `""` (offline mode) | `postgresql://user:password@localhost:5432/cloud_benchmark_db` |
-| `PG_POOL_MAX` | Maximum concurrent pool clients | `20` | `20` |
-| `ENVIRONMENT_NAME` | Name of current testing environment | `Local` | `Local` or `Cloud-GCP` |
-| `SERVER_CONFIGURATION` | Host specifications label | `Standard Local Host` | `4 vCPU, 8GB RAM` |
-
----
-
-## Database Schema
-
-When `DATABASE_URL` is configured, schema migrations run automatically on startup to ensure the required research tables exist:
-
-### 1. `db_benchmark_users`
-- `id`: `SERIAL PRIMARY KEY`
-- `name`: `VARCHAR(255) NOT NULL`
-- `email`: `VARCHAR(255) NOT NULL`
-- `status`: `VARCHAR(50) NOT NULL`
-- `created_at`: `TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-
-### 2. `db_benchmark_orders`
-- `id`: `SERIAL PRIMARY KEY`
-- `user_id`: `INTEGER NOT NULL REFERENCES db_benchmark_users(id) ON DELETE CASCADE`
-- `amount`: `NUMERIC(12, 2) NOT NULL`
-- `status`: `VARCHAR(50) NOT NULL`
-- `created_at`: `TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-
-### 3. `benchmark_results`
-- `id`: `SERIAL PRIMARY KEY`
-- `experiment_type`: `VARCHAR(100) NOT NULL`
-- `dataset_size`: `INTEGER`
-- `execution_time_ms`: `DOUBLE PRECISION NOT NULL`
-- `average_latency_ms`: `DOUBLE PRECISION`
-- `min_latency_ms`: `DOUBLE PRECISION`
-- `max_latency_ms`: `DOUBLE PRECISION`
-- `qps`: `DOUBLE PRECISION`
-- `error_rate`: `DOUBLE PRECISION DEFAULT 0`
-- `experiment_metadata`: `JSONB`
-- `created_at`: `TIMESTAMPTZ NOT NULL DEFAULT NOW()`
-
----
-
-## Dataset Generation
-
-The dataset generation endpoint uses PostgreSQL's native `generate_series` function to populate realistic relational datasets without copying large arrays over Node.js memory:
-
-```http
-POST /api/benchmark/dataset-seed
-Content-Type: application/json
-
-{
-  "dataset_size": 10000
-}
+# Neon PostgreSQL қосылым жолы (SSL қажет):
+DATABASE_URL=postgresql://<user>:<password>@<ep-project-id>.neon.tech/neondb?sslmode=require
+PG_POOL_MAX=20
 ```
 
-- **Supported sizes**: `10000`, `100000`, `1000000`
-- **Safety**: Runs within a transaction (`BEGIN` / `COMMIT`), resets previous test data with `TRUNCATE ... RESTART IDENTITY CASCADE`, parameterizes queries to prevent SQL injection, and runs `ANALYZE` for optimizer statistics.
+---
+
+## 3. Деректер қорының құрылымы (Database Schema)
+
+Сервер іске қосылған кезде `initDatabaseSchema()` функциясы кестелерді автоматты түрде құрады және тексереді:
+
+1. **`db_benchmark_users`** — Пайдаланушылар кестесі (ID, Name, Email, Status, Created_at).
+2. **`db_benchmark_orders`** — Тапсырыстар кестесі (ID, User_ID, Amount, Status, Created_at) — реляциялық байланыстар мен агрегацияға арналған.
+3. **`benchmark_results`** — Барлық нақты ғылыми сынақтардың кідірісі (Latency), өткізу қабілеті (QPS), стандартты ауытқуы ($\sigma$) мен сенімділік аралығын (95% CI) сақтайтын кесте.
 
 ---
 
-## API Endpoints
+## 4. Зерттеу эксперименттерінің түрлері (Experiments)
 
-- `GET /api/health` — Returns status of application and live PostgreSQL connection.
-- `GET /api/database/status` — Returns database name, PostgreSQL version, size in MB, active connections, and table row counts.
-- `POST /api/benchmark/dataset-seed` — Generates 10k, 100k, or 1M relational rows in PostgreSQL.
-- `GET /api/system-info` — System information (OS, CPU cores, RAM).
-- `GET /api/metrics` — Live CPU and RAM usage polled by the dashboard.
-- `GET /api/benchmarks` — Benchmark test history.
-- `GET /api/benchmarks/compare` — Cross-environment comparative performance data.
+### 4.1. Нақты SQL сұраныстар бенчмаркі (SQL Query Performance)
+- **1. Primary Key Lookup (`by_id`):** Индекстелген негізгі кілт бойынша іздеу.
+- **2. Email Lookup (`filter_email`):** Мәтіндік баған бойынша сүзгілеу.
+- **3. Status Filtering (`filter_status`):** Категориялық мән бойынша іріктеу.
+- **4. Sorting (`filter_sort_created`):** Уақыт таңбасы бойынша сұрыптау (`ORDER BY created_at DESC`).
+- **5. Aggregation (`count_aggregate`):** `GROUP BY status`, `AVG(amount)`, `SUM(amount)`.
+- **6. Relational JOIN (`join_orders`):** Пайдаланушылар мен тапсырыстар арасындағы ішкі байланыс (`INNER JOIN`).
+
+### 4.2. Индекстеуді оңтайландыру (Index Optimization)
+- **A конфигурациясы:** Индекссіз (Sequential Scan — кестені рет-ретімен толық қарап шығу).
+- **B конфигурациясы:** B-tree индексі (`idx_db_benchmark_users_email` — Index Scan).
+- Оңтайландыру коэффициенті мен кідірісті қысқарту пайызын автоматты есептеу.
+
+### 4.3. Байланыстар пулын басқару (Connection Pooling)
+- 1, 5, 10, 20 байланыс пулының өткізу қабілетін (QPS) және P95 кідірісін бір мезгілдегі (concurrency) жүктеме астында сынау.
 
 ---
 
-## Testing
+## 5. Тестілеу және іске қосу (Testing & Running)
 
-Run unit and integration validation tests:
-
+### Интеграциялық тестілерді орындау:
 ```bash
 npm test
 ```
+
+### Жүйені құрастыру (TypeScript Compilation):
+```bash
+npm run build
+```
+
+### Серверді іске қосу:
+```bash
+npm start
+```
+Браузерде ашыңыз: `http://localhost:3000`
+
+---
+
+## 6. Университеттегі ғылыми қорғауға арналған қадамдық нұсқаулық (University Demonstration Walkthrough)
+
+1. **Қосымшаны іске қосу:** `npm start` командасын орындап, браузерден `http://localhost:3000` ашыңыз.
+2. **Деректер базасының күйін тексеру:** «Шолу» бөлімінде Neon PostgreSQL күйін, дискілік көлемін және белсенді байланыстар санын профессорға көрсетіңіз.
+3. **Деректер жинағын толтыру:** «SQL Бенчмарктері» бөліміне өтіп, 10 000 немесе 100 000 жазба таңдап, `generate_series` арқылы нақты мәліметтер толтырыңыз.
+4. **Базалық SQL сұранысты орындау:** Бастапқы кілт бойынша және email бойынша іздеу жасап, орташа кідіріс пен QPS көрсеткіштерін көрсетіңіз.
+5. **Индекстеу экспериментін көрсету:** «Индекстеу» бөліміне өтіп, «Индекстеу салыстырмалы сынағын өткізу» батырмасын басыңыз. Sequential Scan және Index Scan жоспарларының айырмашылығы мен бірнеше еселік жеделдеуді көрсетіңіз.
+6. **Байланыстар пулын сынау:** «Байланыстар пулы» бөлімінде параллель ағындар астында 1-ден 20-ға дейінгі пулдаудың өткізу қабілетіне әсерін көрсетіңіз.
+7. **Графиктер мен ғылыми талдау:** «Графиктер» бөлімінде динамиканы, ал «Ғылыми есеп» бөлімінде автоматты академиялық қорытындыны көрсетіңіз.
+8. **Есепті экспорттау:** «Нәтижелер тарихы» бөлімінен CSV форматында жүктеп, «Ғылыми есеп» бөлімінде «🖨️ Басып шығару / PDF» батырмасымен диссертациялық есепті сақтаңыз.

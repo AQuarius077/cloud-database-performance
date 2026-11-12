@@ -1,40 +1,43 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="kk">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cloud Resource Benchmark</title>
+  <title>Бұлттық деректер базасының өнімділігін оңтайландыру әдістерін зерттеу</title>
   <meta name="description"
-        content="Academic benchmarking dashboard for studying resource utilisation efficiency across local and cloud environments." />
-  <meta property="og:title" content="Cloud Resource Benchmark" />
-  <meta property="og:description" content="Academic benchmarking dashboard for studying resource utilisation efficiency across local and cloud environments." />
+        content="Бұлттық деректер базасының (PostgreSQL / Neon) ресурстық және сұраныстық өнімділігін оңтайландыру әдістерін зерттеуге арналған ғылыми-тәжірибелік платформа." />
 
-  <!-- Preconnect to Google Fonts -->
+  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
   <!-- Stylesheet -->
   <link rel="stylesheet" href="/static/css/style.css" />
 
-  <!-- Chart.js (CDN, no auth required) -->
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <!-- KaTeX (Mathematical Formulas Rendering) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
 </head>
 <body>
 
 <!-- ====================================================
-     App Header
+     App Header (Қазақ тілінде)
      ==================================================== -->
 <header class="app-header" role="banner">
   <div class="app-header__brand">
     <div class="app-header__icon" aria-hidden="true">📊</div>
     <div>
-      <div class="app-header__title">Cloud Resource Benchmark</div>
-      <div class="app-header__subtitle">Research Tool — Resource Utilisation Efficiency Study</div>
+      <div class="app-header__title">Бұлттық деректер базасының өнімділігін оңтайландыру әдістерін зерттеу</div>
+      <div class="app-header__subtitle">Магистрлік ғылыми-зерттеу платформасы — Cloud Database Performance Optimization Platform</div>
     </div>
   </div>
 
   <div class="app-header__meta">
-    <span><span class="status-dot" id="status-dot" aria-label="Live"></span> Live</span>
+    <span><span class="status-dot" id="status-dot" aria-label="Жүйе белсенді"></span> Белсенді</span>
     <span class="env-badge" id="env-badge">—</span>
     <span id="header-cfg" style="font-size:0.72rem; color:var(--text-muted)">—</span>
   </div>
@@ -43,12 +46,15 @@
 <!-- ====================================================
      Navigation Tabs
      ==================================================== -->
-<nav class="nav-tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="nav-tab active" role="tab" data-panel="overview-panel"   id="tab-overview"   aria-selected="true">Overview</button>
-  <button class="nav-tab"        role="tab" data-panel="benchmark-panel"  id="tab-benchmarks" aria-selected="false">Benchmarks</button>
-  <button class="nav-tab"        role="tab" data-panel="history-panel"    id="tab-history"    aria-selected="false">History</button>
-  <button class="nav-tab"        role="tab" data-panel="compare-panel"    id="tab-compare"    aria-selected="false">Local vs Cloud</button>
-  <button class="nav-tab"        role="tab" data-panel="charts-panel"     id="tab-charts"     aria-selected="false">Charts</button>
+<nav class="nav-tabs" role="tablist" aria-label="Басқару бөлімдері">
+  <button class="nav-tab active" role="tab" data-panel="overview-panel"   id="tab-overview"   aria-selected="true">Шолу</button>
+  <button class="nav-tab"        role="tab" data-panel="benchmark-panel"  id="tab-benchmarks" aria-selected="false">SQL Бенчмарктері</button>
+  <button class="nav-tab"        role="tab" data-panel="index-panel"      id="tab-index"      aria-selected="false">Индекстеу</button>
+  <button class="nav-tab"        role="tab" data-panel="pool-panel"       id="tab-pool"       aria-selected="false">Байланыстар пулы</button>
+  <button class="nav-tab"        role="tab" data-panel="history-panel"    id="tab-history"    aria-selected="false">Нәтижелер тарихы</button>
+  <button class="nav-tab"        role="tab" data-panel="compare-panel"    id="tab-compare"    aria-selected="false">Cloud vs Local</button>
+  <button class="nav-tab"        role="tab" data-panel="charts-panel"     id="tab-charts"     aria-selected="false">Графиктер</button>
+  <button class="nav-tab"        role="tab" data-panel="report-panel"     id="tab-report"     aria-selected="false">Ғылыми есеп</button>
 </nav>
 
 <!-- ====================================================
@@ -56,111 +62,117 @@
      ==================================================== -->
 <main class="main-content" id="main-content">
 
+  <!-- Деректер базасына қосылу жылдам панелі -->
+  <div class="db-connect-bar">
+    <span style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);">PostgreSQL / Neon URL:</span>
+    <input type="password" id="db-url-input" class="db-connect-input" placeholder="postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require" />
+    <button class="btn-filter" id="btn-toggle-show-url" type="button" style="padding:0.45rem 0.75rem;">Көрсету</button>
+    <button class="btn-filter" id="btn-save-db-url" type="button" style="background:var(--accent-blue);color:#fff;border:none;padding:0.45rem 1rem;">Қосылу</button>
+  </div>
+
   <!-- ------------------------------------------------
        1. OVERVIEW PANEL
        ------------------------------------------------ -->
   <section class="tab-panel active" id="overview-panel" role="tabpanel" aria-labelledby="tab-overview">
 
-    <!-- Live Metrics -->
-    <p class="section-title">Live Metrics <small style="font-size:0.65rem;color:var(--text-muted);text-transform:none;">(updated every 2 s)</small></p>
+    <!-- Live Host Metrics -->
+    <p class="section-title">Клиенттік хост метрикалары <small style="font-size:0.65rem;color:var(--text-muted);text-transform:none;">(әр 2 секунд сайын жаңартылады)</small></p>
     <div class="grid-4 mb-3">
 
       <div class="metric-card">
-        <div class="metric-card__label">CPU Utilisation</div>
+        <div class="metric-card__label">Клиенттік CPU жүктемесі</div>
         <div class="metric-card__value" id="live-cpu">—</div>
         <div class="progress-bar"><div class="progress-bar__fill progress-bar__fill--blue" id="cpu-bar-fill" style="width:0%"></div></div>
-        <div class="metric-card__sub">system-wide average</div>
+        <div class="metric-card__sub">Node.js хост машинасы</div>
       </div>
 
       <div class="metric-card">
-        <div class="metric-card__label">RAM Utilisation</div>
+        <div class="metric-card__label">Хост RAM жүктемесі</div>
         <div class="metric-card__value" id="live-ram-pct">—</div>
         <div class="progress-bar"><div class="progress-bar__fill progress-bar__fill--green" id="ram-bar-fill" style="width:0%"></div></div>
-        <div class="metric-card__sub">of total physical RAM</div>
+        <div class="metric-card__sub">жалпы физикалық жадтан</div>
       </div>
 
       <div class="metric-card">
-        <div class="metric-card__label">RAM Used</div>
+        <div class="metric-card__label">Қолданылған RAM</div>
         <div class="metric-card__value" id="live-ram-used">—</div>
-        <div class="metric-card__sub">absolute consumption</div>
+        <div class="metric-card__sub">хост тұтынуы</div>
       </div>
 
       <div class="metric-card">
-        <div class="metric-card__label">RAM Available</div>
+        <div class="metric-card__label">Бос RAM</div>
         <div class="metric-card__value" id="live-ram-avail">—</div>
-        <div class="metric-card__sub">free for new processes</div>
-      </div>
-
-    </div>
-
-    <!-- System Information -->
-    <p class="section-title">System Information</p>
-    <div class="grid-3 mb-3">
-
-      <div class="card">
-        <div class="card__title">Host &amp; OS</div>
-        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Hostname</td><td class="mono" id="si-hostname">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">OS</td><td class="mono" id="si-os">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Runtime</td><td class="mono" id="si-python">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Uptime</td><td class="mono" id="si-uptime">—</td></tr>
-        </table>
-      </div>
-
-      <div class="card">
-        <div class="card__title">CPU &amp; Memory</div>
-        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">CPU Cores</td><td class="mono" id="si-cores">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">CPU %</td><td class="mono" id="si-cpu-pct">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Total RAM</td><td class="mono" id="si-total-ram">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Avail RAM</td><td class="mono" id="si-avail-ram">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">RAM %</td><td class="mono" id="si-ram-pct">—</td></tr>
-        </table>
-      </div>
-
-      <div class="card">
-        <div class="card__title">Experiment Identity</div>
-        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Environment</td><td class="mono text-cyan" id="si-env">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Server Config</td><td class="mono" id="si-config">—</td></tr>
-        </table>
-        <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-secondary);border-radius:var(--radius-sm);font-size:0.73rem;color:var(--text-secondary)">
-          Configure <code>ENVIRONMENT_NAME</code> and <code>SERVER_CONFIGURATION</code> in your <code>.env</code> file to identify this host in benchmark results.
-        </div>
+        <div class="metric-card__sub">жаңа процестерге қолжетімді</div>
       </div>
 
     </div>
 
     <!-- Real PostgreSQL Database Status -->
-    <p class="section-title">PostgreSQL Database Status <small style="font-size:0.65rem;color:var(--text-muted);text-transform:none;">(Live pg.Pool Status)</small></p>
+    <p class="section-title">PostgreSQL (Neon Cloud) Деректер базасының күйі <small style="font-size:0.65rem;color:var(--text-muted);text-transform:none;">(Нақты pg.Pool күйі)</small></p>
     <div class="grid-3 mb-3">
 
       <div class="card">
-        <div class="card__title">Connection &amp; Server</div>
+        <div class="card__title">Қосылым және СУБД нұсқасы</div>
         <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Status</td><td id="db-status-badge"><span class="badge badge--data">Checking...</span></td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Database</td><td class="mono" id="db-stat-name">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Version</td><td class="mono" id="db-stat-version" style="font-size:0.72rem">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Күйі (Status)</td><td id="db-status-badge"><span class="badge badge--data">Тексерілуде...</span></td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">База аты</td><td class="mono" id="db-stat-name">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">СУБД нұсқасы</td><td class="mono" id="db-stat-version" style="font-size:0.72rem">—</td></tr>
         </table>
       </div>
 
       <div class="card">
-        <div class="card__title">Storage &amp; Activity</div>
+        <div class="card__title">Дискідегі көлем және Байланыстар</div>
         <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Size on Disk</td><td class="mono text-cyan" id="db-stat-size">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Active Connections</td><td class="mono" id="db-stat-conns">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Connection Pool</td><td class="mono" id="db-stat-pool">pg.Pool (max: 20)</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">База көлемі</td><td class="mono text-cyan" id="db-stat-size">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Белсенді байланыстар</td><td class="mono" id="db-stat-conns">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Байланыстар пулы</td><td class="mono" id="db-stat-pool">pg.Pool (max: 20)</td></tr>
         </table>
       </div>
 
       <div class="card">
-        <div class="card__title">Research Tables (Row Counts)</div>
+        <div class="card__title">Зерттеу кестелері (Жазбалар саны)</div>
         <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
           <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:55%">db_benchmark_users</td><td class="mono text-green" id="db-stat-users">—</td></tr>
           <tr><td style="color:var(--text-secondary);padding:0.3rem 0">db_benchmark_orders</td><td class="mono text-green" id="db-stat-orders">—</td></tr>
           <tr><td style="color:var(--text-secondary);padding:0.3rem 0">benchmark_results</td><td class="mono" id="db-stat-results">—</td></tr>
-          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">idx_users_email</td><td class="mono" id="db-stat-index">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Индекс күйі (email)</td><td class="mono" id="db-stat-index">—</td></tr>
         </table>
+      </div>
+
+    </div>
+
+    <!-- System Information -->
+    <p class="section-title">Жүйелік және Ғылыми орта ақпараты</p>
+    <div class="grid-3 mb-3">
+
+      <div class="card">
+        <div class="card__title">Хост және Операциялық жүйе</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Хост аты</td><td class="mono" id="si-hostname">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">ОЖ (OS)</td><td class="mono" id="si-os">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Орта (Runtime)</td><td class="mono" id="si-python">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Uptime</td><td class="mono" id="si-uptime">—</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card__title">Аппараттық ресурстар</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">CPU ядролары</td><td class="mono" id="si-cores">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Жалпы RAM</td><td class="mono" id="si-total-ram">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Қолжетімді RAM</td><td class="mono" id="si-avail-ram">—</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card__title">Зерттеу ортасының сәйкестендіргіші</div>
+        <table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0;width:45%">Эксперимент ортасы</td><td class="mono text-cyan" id="si-env">—</td></tr>
+          <tr><td style="color:var(--text-secondary);padding:0.3rem 0">Конфигурация</td><td class="mono" id="si-config">—</td></tr>
+        </table>
+        <div style="margin-top:0.75rem;padding:0.5rem;background:var(--bg-secondary);border-radius:var(--radius-sm);font-size:0.72rem;color:var(--text-secondary)">
+          Магистрлік диссертация талабы: Бұлттық (Neon) және жергілікті (Local) орталардағы нақты айырмашылықтар зерттеледі.
+        </div>
       </div>
 
     </div>
@@ -173,147 +185,68 @@
        ------------------------------------------------ -->
   <section class="tab-panel" id="benchmark-panel" role="tabpanel" aria-labelledby="tab-benchmarks">
 
-    <p class="section-title">Run Benchmarks</p>
-    <div class="grid-3">
+    <p class="section-title">Нақты SQL Сұраныстар Бенчмаркі</p>
+    <div class="grid-2">
 
-      <!-- CPU Benchmark -->
-      <div class="bench-card" id="cpu-bench-card">
-        <div class="bench-card__header">
-          <div class="bench-card__icon icon--blue" aria-hidden="true">⚡</div>
-          <div>
-            <div class="bench-card__title">CPU Benchmark</div>
-            <div class="bench-card__desc">Multi-threaded prime counting — stresses all CPU cores</div>
-          </div>
-        </div>
-
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Duration</p>
-        <div class="option-group" id="cpu-options" role="group" aria-label="CPU benchmark duration">
-          <button class="option-btn" data-value="5"  aria-pressed="false">5 seconds</button>
-          <button class="option-btn" data-value="10" aria-pressed="false">10 seconds</button>
-          <button class="option-btn" data-value="30" aria-pressed="false">30 seconds</button>
-        </div>
-
-        <button class="btn-run" id="cpu-run-btn" type="button">
-          <span class="spinner" id="cpu-spinner"></span>
-          Run CPU Benchmark
-        </button>
-
-        <div class="result-box" id="cpu-result"></div>
-      </div>
-
-      <!-- Database Benchmark -->
+      <!-- Database Benchmark Card -->
       <div class="bench-card" id="db-bench-card">
         <div class="bench-card__header">
           <div class="bench-card__icon icon--cyan" aria-hidden="true">🗄️</div>
           <div>
-            <div class="bench-card__title">Real SQL Database Benchmark</div>
-            <div class="bench-card__desc">Parameterized SQL queries executed against db_benchmark_users table</div>
+            <div class="bench-card__title">Нақты SQL сұраныс эксперименті</div>
+            <div class="bench-card__desc">Параметрленген нақты сұраныстар (PostgreSQL / Neon)</div>
           </div>
         </div>
 
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Benchmark Scenario</p>
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Сұраныс түрі (Scenario)</p>
         <div class="option-group" id="db-scenario-options" role="group" aria-label="SQL Benchmark Scenario">
-          <button class="option-btn" data-value="filter_email" aria-pressed="false">Filter Email</button>
-          <button class="option-btn" data-value="by_id" aria-pressed="false">By Primary Key</button>
-          <button class="option-btn" data-value="filter_sort_created" aria-pressed="false">Filter & Sort</button>
-          <button class="option-btn" data-value="count_status" aria-pressed="false">Count Matching</button>
+          <button class="option-btn" data-value="by_id" aria-pressed="false">1. Бастапқы кілт (PK lookup)</button>
+          <button class="option-btn" data-value="filter_email" aria-pressed="false">2. Email бойынша іздеу</button>
+          <button class="option-btn" data-value="filter_status" aria-pressed="false">3. Статус сүзгісі</button>
+          <button class="option-btn" data-value="filter_sort_created" aria-pressed="false">4. Сұрыптау (created_at)</button>
+          <button class="option-btn" data-value="count_aggregate" aria-pressed="false">5. Агрегация (COUNT/AVG/SUM)</button>
+          <button class="option-btn" data-value="join_orders" aria-pressed="false">6. Реляциялық байланыс (JOIN)</button>
         </div>
 
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Measured Repetitions</p>
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem;margin-top:0.75rem">Қайталаулар саны (Repetitions)</p>
         <div class="option-group" id="db-options" role="group" aria-label="Database repetitions">
-          <button class="option-btn" data-value="25"  aria-pressed="false">25 queries</button>
-          <button class="option-btn" data-value="50"  aria-pressed="false">50 queries</button>
-          <button class="option-btn" data-value="100" aria-pressed="false">100 queries</button>
+          <button class="option-btn" data-value="10" aria-pressed="false">10 сұраныс</button>
+          <button class="option-btn" data-value="30" aria-pressed="false">30 сұраныс</button>
+          <button class="option-btn" data-value="100" aria-pressed="false">100 сұраныс</button>
         </div>
 
-        <button class="btn-run" id="db-run-btn" type="button">
+        <button class="btn-run" id="db-run-btn" type="button" style="margin-top:1rem;">
           <span class="spinner" id="db-spinner"></span>
-          Run Real Database Benchmark
+          Нақты SQL бенчмаркін бастау
         </button>
 
         <div class="result-box" id="db-result"></div>
       </div>
 
-      <!-- Controlled Index Optimization Experiment Card -->
-      <div class="bench-card" id="index-bench-card">
-        <div class="bench-card__header">
-          <div class="bench-card__icon icon--blue" aria-hidden="true">⚡</div>
-          <div>
-            <div class="bench-card__title">Controlled Index Experiment</div>
-            <div class="bench-card__desc">Configuration A (Seq Scan) vs Configuration B (Index Scan)</div>
-          </div>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;padding:0.4rem 0.6rem;background:var(--bg-secondary);border-radius:var(--radius-sm);border:1px solid var(--border);">
-          <span style="font-size:0.75rem;color:var(--text-secondary);">Index Status (email):</span>
-          <span id="index-toggle-status" class="mono text-cyan" style="font-size:0.75rem;font-weight:600;">Checking…</span>
-        </div>
-
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Repetitions Per Configuration</p>
-        <div class="option-group" id="index-exp-options" role="group" aria-label="Index experiment repetitions">
-          <button class="option-btn" data-value="15" aria-pressed="false">15 queries</button>
-          <button class="option-btn" data-value="30" aria-pressed="false">30 queries</button>
-          <button class="option-btn" data-value="60" aria-pressed="false">60 queries</button>
-        </div>
-
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;">
-          <button class="btn-filter" id="btn-create-index" type="button" style="flex:1;padding:0.5rem 0.2rem;font-size:0.75rem;">Create Index</button>
-          <button class="btn-filter" id="btn-drop-index" type="button" style="flex:1;padding:0.5rem 0.2rem;font-size:0.75rem;border-color:var(--accent-orange);color:var(--accent-orange);">Drop Index</button>
-        </div>
-
-        <button class="btn-run" id="index-run-btn" type="button">
-          <span class="spinner" id="index-spinner"></span>
-          Run Controlled Index Comparison
-        </button>
-
-        <div class="result-box" id="index-result"></div>
-      </div>
-
-      <!-- Data Processing Benchmark -->
-      <div class="bench-card" id="data-bench-card">
-        <div class="bench-card__header">
-          <div class="bench-card__icon icon--purple" aria-hidden="true">🧮</div>
-          <div>
-            <div class="bench-card__title">Data Processing Benchmark</div>
-            <div class="bench-card__desc">Matrix multiplication (Float64) — deterministic, reproducible</div>
-          </div>
-        </div>
-
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Dataset size</p>
-        <div class="option-group" id="data-options" role="group" aria-label="Data processing size">
-          <button class="option-btn" data-value="small"  aria-pressed="false">Small (512²)</button>
-          <button class="option-btn" data-value="medium" aria-pressed="false">Medium (1024²)</button>
-          <button class="option-btn" data-value="large"  aria-pressed="false">Large (2048²)</button>
-        </div>
-
-        <button class="btn-run" id="data-run-btn" type="button">
-          <span class="spinner" id="data-spinner"></span>
-          Run Data Processing Benchmark
-        </button>
-
-        <div class="result-box" id="data-result"></div>
-      </div>
-
-      <!-- Dataset Seeding Benchmark Card -->
+      <!-- Dataset Seeding Card -->
       <div class="bench-card" id="seed-bench-card">
         <div class="bench-card__header">
           <div class="bench-card__icon icon--green" aria-hidden="true">🌱</div>
           <div>
-            <div class="bench-card__title">Dataset Seeding</div>
-            <div class="bench-card__desc">Generate research rows in PostgreSQL (generate_series)</div>
+            <div class="bench-card__title">Зерттеу деректер жинағын генерациялау</div>
+            <div class="bench-card__desc">PostgreSQL generate_series() арқылы транзакциялық реляциялық мәліметтер</div>
           </div>
         </div>
 
-        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Target Dataset Size</p>
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Деректер жинағының көлемі (Dataset Size)</p>
         <div class="option-group" id="seed-options" role="group" aria-label="Dataset row count">
-          <button class="option-btn" data-value="10000" aria-pressed="false">10 000 rows</button>
-          <button class="option-btn" data-value="100000" aria-pressed="false">100 000 rows</button>
-          <button class="option-btn" data-value="1000000" aria-pressed="false">1 000 000 rows</button>
+          <button class="option-btn" data-value="10000" aria-pressed="false">10 000 жазба (Базалық)</button>
+          <button class="option-btn" data-value="100000" aria-pressed="false">100 000 жазба (Орташа)</button>
+          <button class="option-btn" data-value="1000000" aria-pressed="false">1 000 000 жазба (Үлкен)</button>
+        </div>
+
+        <div style="background:rgba(245,158,11,0.1);border-left:3px solid var(--accent-orange);padding:0.6rem 0.8rem;border-radius:var(--radius-sm);margin:1rem 0;font-size:0.75rem;color:var(--text-secondary);">
+          ⚠️ Ескерту: Жаңа деректер жинағын генерациялау алдында бұрынғы кестелер тазартылады (TRUNCATE ... CASCADE).
         </div>
 
         <button class="btn-run" id="seed-run-btn" type="button">
           <span class="spinner" id="seed-spinner"></span>
-          Seed PostgreSQL Dataset
+          Деректер қорын генерациялау
         </button>
 
         <div class="result-box" id="seed-result"></div>
@@ -324,62 +257,249 @@
 
 
   <!-- ------------------------------------------------
-       3. HISTORY PANEL
+       3. INDEX OPTIMIZATION PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="index-panel" role="tabpanel" aria-labelledby="tab-index">
+
+    <p class="section-title">Индекстеуді оңтайландыру эксперименті (Sequential Scan vs B-tree)</p>
+
+    <div class="grid-2">
+      <!-- Controlled Index Experiment Card -->
+      <div class="bench-card" id="index-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--blue" aria-hidden="true">⚡</div>
+          <div>
+            <div class="bench-card__title">Бақыланатын индекстеу эксперименті</div>
+            <div class="bench-card__desc">A: Индекссіз (Seq Scan) vs B: B-tree / Композиттік (Index Scan)</div>
+          </div>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Эксперимент түрі (Index Type)</p>
+        <div class="option-group" id="index-type-options" role="group" aria-label="Index Experiment Type">
+          <button class="option-btn selected" data-value="single_btree" aria-pressed="true">1. Жалғыз B-tree (email)</button>
+          <button class="option-btn" data-value="composite_btree" aria-pressed="false">2. Композиттік B-tree (status + created_at)</button>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0.75rem 0;padding:0.5rem 0.75rem;background:var(--bg-secondary);border-radius:var(--radius-sm);border:1px solid var(--border);">
+          <span style="font-size:0.78rem;color:var(--text-secondary);">Индекс күйі:</span>
+          <span id="index-toggle-status" class="mono text-cyan" style="font-size:0.8rem;font-weight:600;">Тексерілуде…</span>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Әр конфигурацияға арналған қайталау саны</p>
+        <div class="option-group" id="index-exp-options" role="group" aria-label="Index experiment repetitions">
+          <button class="option-btn selected" data-value="15" aria-pressed="true">15 сұраныс</button>
+          <button class="option-btn" data-value="30" aria-pressed="false">30 сұраныс</button>
+          <button class="option-btn" data-value="60" aria-pressed="false">60 сұраныс</button>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin:1rem 0;">
+          <button class="btn-filter" id="btn-create-index" type="button" style="padding:0.5rem;font-size:0.75rem;">B-tree (email) қосу</button>
+          <button class="btn-filter" id="btn-drop-index" type="button" style="padding:0.5rem;font-size:0.75rem;border-color:var(--accent-orange);color:var(--accent-orange);">B-tree өшіру</button>
+          <button class="btn-filter" id="btn-create-comp-index" type="button" style="padding:0.5rem;font-size:0.75rem;">Композиттік қосу</button>
+          <button class="btn-filter" id="btn-drop-comp-index" type="button" style="padding:0.5rem;font-size:0.75rem;border-color:var(--accent-orange);color:var(--accent-orange);">Композиттік өшіру</button>
+        </div>
+
+        <button class="btn-run" id="index-run-btn" type="button">
+          <span class="spinner" id="index-spinner"></span>
+          Индекстеу салыстырмалы сынағын өткізу
+        </button>
+
+        <div class="result-box" id="index-result"></div>
+      </div>
+
+      <!-- Execution Plan & Theory Explanation -->
+      <div class="card">
+        <div class="card__title">Сұранысты орындау жоспары және Салыстырмалы График</div>
+        <div style="height:220px;margin-bottom:1rem;"><canvas id="indexLiveChart"></canvas></div>
+
+        <p style="font-size:0.8rem;color:var(--text-secondary);line-height:1.7;margin-bottom:0.75rem;">
+          Бұл сынақта PostgreSQL оптимизаторының шешімдері зерттеледі:
+        </p>
+        <ul style="font-size:0.8rem;color:var(--text-secondary);padding-left:1.25rem;line-height:1.8;margin-bottom:0.75rem;">
+          <li><strong>Sequential Scan:</strong> Барлық дискілік блоктар рет-ретімен қарап шығылады ($O(N)$ күрделілігі).</li>
+          <li><strong>Index Scan / Bitmap Index Scan:</strong> B-tree құрылымы арқылы іздеу логарифмдік уақытта орындалады ($O(\log N)$).</li>
+          <li><strong>Sort Elimination:</strong> Композиттік индекс (`status, created_at DESC`) сұрыптау операторын толық жояды.</li>
+        </ul>
+        <div class="formula-card">
+          Оңтайландыру коэффициенті (Speedup):<br/>
+          $S = \frac{T_{\text{unindexed}}}{T_{\text{indexed}}}$ &emsp;|&emsp;
+          Кідірісті азайту: $\Delta L = \frac{T_A - T_B}{T_A} \times 100\%$
+        </div>
+      </div>
+    </div>
+
+  </section><!-- /index-panel -->
+
+
+  <!-- ------------------------------------------------
+       4. CONNECTION POOLING PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="pool-panel" role="tabpanel" aria-labelledby="tab-pool">
+
+    <p class="section-title">Байланыстар пулын зерттеу (Connection Pooling Performance Research)</p>
+
+    <div class="grid-2">
+      <div class="bench-card" id="pool-bench-card">
+        <div class="bench-card__header">
+          <div class="bench-card__icon icon--purple" aria-hidden="true">🔄</div>
+          <div>
+            <div class="bench-card__title">Байланыстар пулының параметрлері</div>
+            <div class="bench-card__desc">pg.Pool өлшемі мен қатарлас сұраныстар ағынының өнімділікке әсерін зерттеу</div>
+          </div>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">Байланыстар пулының өлшемі (Pool Size)</p>
+        <div class="option-group" id="pool-size-options" role="group" aria-label="Pool size">
+          <button class="option-btn active" data-value="all" aria-pressed="true">Барлығы (1, 5, 10, 20)</button>
+          <button class="option-btn" data-value="1"  aria-pressed="false">1 байланыс</button>
+          <button class="option-btn" data-value="5"  aria-pressed="false">5 байланыс</button>
+          <button class="option-btn" data-value="10" aria-pressed="false">10 байланыс</button>
+          <button class="option-btn" data-value="20" aria-pressed="false">20 байланыс</button>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem;margin-top:0.75rem">Параллель ағындар саны (Concurrency Level)</p>
+        <div class="option-group" id="pool-concurrency-options" role="group" aria-label="Concurrency level">
+          <button class="option-btn" data-value="1"  aria-pressed="false">1 ағын</button>
+          <button class="option-btn" data-value="5"  aria-pressed="false">5 ағын</button>
+          <button class="option-btn active" data-value="10" aria-pressed="true">10 ағын</button>
+          <button class="option-btn" data-value="20" aria-pressed="false">20 ағын</button>
+        </div>
+
+        <p style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem;margin-top:0.75rem">Әр ағынға берілетін сұраныстар саны (Repetitions)</p>
+        <div class="option-group" id="pool-rep-options" role="group" aria-label="Queries per worker">
+          <button class="option-btn" data-value="3" aria-pressed="false">3 сұраныс</button>
+          <button class="option-btn active" data-value="5" aria-pressed="true">5 сұраныс</button>
+          <button class="option-btn" data-value="10" aria-pressed="false">10 сұраныс</button>
+        </div>
+
+        <button class="btn-run" id="pool-run-btn" type="button" style="margin-top:1rem;">
+          <span class="spinner" id="pool-spinner"></span>
+          Байланыстар пулының экспериментін бастау
+        </button>
+
+        <div id="pool-progress-msg" style="display:none;margin-top:0.75rem;font-size:0.8rem;color:var(--accent-blue)">
+          ⏳ Эксперимент орындалуда: байланыстар ашылып, параллель сұраныстар өлшенуде...
+        </div>
+
+        <div class="result-box" id="pool-result"></div>
+      </div>
+
+      <div class="card">
+        <div class="card__title">Ғылыми негіздеме: Бұлттық пулдау және қанығу динамикасы</div>
+        <p style="font-size:0.8rem;color:var(--text-secondary);line-height:1.7;margin-bottom:0.75rem;">
+          Бұлттық үлестірілген деректер базасында (Neon Serverless PostgreSQL) жаңа TLS/SSL қосылымын ашу (TCP Handshake + TLS negotiation) шамамен 50-150 мс кідіріс тудырады.
+        </p>
+        <div class="formula-card">
+          Жалпы сұраныс уақыты (Latency Decomposition):<br/>
+          $T_{\text{latency}} = T_{\text{acquire}} + T_{\text{exec}}$<br/>
+          Өткізу қабілеті (Throughput): $\text{QPS} = \frac{N_{\text{total}}}{T_{\text{duration}}}$
+        </div>
+        <p style="font-size:0.8rem;color:var(--text-secondary);line-height:1.7;margin-top:0.75rem;">
+          <strong>Байланыстар қанығуы (Connection Saturation):</strong> Егер ағындар саны ($C$) пул көлемінен ($P$) асып кетсе, сұраныстар бос қосылымды күтіп кезекке тұрады ($T_{\text{acquire}} > T_{\text{exec}}$). Оңтайлы пул өлшемі осы кезек күту кідірісін минимумға түсіреді.
+        </p>
+      </div>
+    </div>
+
+    <!-- Live Performance Charts for Connection Pooling -->
+    <div class="chart-grid" style="margin-top:1.5rem">
+      <div class="chart-card">
+        <div class="chart-card__title">Пул өлшемі vs Өткізу қабілеті (Throughput - QPS)</div>
+        <div style="height:220px"><canvas id="poolLiveQpsChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card__title">Пул өлшемі vs P95 кідіріс (P95 Latency - ms)</div>
+        <div style="height:220px"><canvas id="poolLiveP95Chart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card__title">Кезек күту (Acquire) vs SQL орындалу (Exec) уақыты</div>
+        <div style="height:220px"><canvas id="poolLiveBreakdownChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Detailed Step Results Table -->
+    <div class="card" style="margin-top:1.5rem">
+      <div class="card__title">Эксперимент нәтижелерінің нақты өлшеу кестесі</div>
+      <div class="table-wrapper">
+        <table id="pool-steps-table" aria-label="Байланыстар пулының нәтижелері">
+          <thead>
+            <tr>
+              <th>Пул өлшемі</th>
+              <th>Ағындар</th>
+              <th>Сұраныстар</th>
+              <th>Өткізу (QPS)</th>
+              <th>Орташа (мс)</th>
+              <th>P95 (мс)</th>
+              <th>Кезек күту (Acquire, мс)</th>
+              <th>SQL орындалу (мс)</th>
+              <th>Қанығу күйі</th>
+              <th>Қателік (%)</th>
+            </tr>
+          </thead>
+          <tbody id="pool-steps-tbody">
+            <tr>
+              <td colspan="10" class="text-muted" style="text-align:center;padding:1.5rem">
+                Сынақ өткізілген жоқ. «Экспериментті бастау» батырмасын басыңыз.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </section><!-- /pool-panel -->
+
+
+  <!-- ------------------------------------------------
+       5. HISTORY PANEL
        ------------------------------------------------ -->
   <section class="tab-panel" id="history-panel" role="tabpanel" aria-labelledby="tab-history">
 
-    <p class="section-title">Benchmark History</p>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1rem;">
+      <p class="section-title" style="margin:0;">Бенчмарк нәтижелерінің тарихы</p>
+      <a href="/api/benchmarks/export/csv" class="btn-export" target="_blank" download="cloud_benchmark_results.csv">
+        📥 CSV форматында жүктеу
+      </a>
+    </div>
 
     <!-- Filters -->
     <div class="filters-bar mb-2">
 
       <div class="filter-group">
-        <label for="filter-type">Test type</label>
+        <label for="filter-type">Сынақ түрі</label>
         <select class="select-input" id="filter-type">
-          <option value="">All types</option>
-          <option value="cpu">CPU</option>
-          <option value="database">Database</option>
-          <option value="data-processing">Data Processing</option>
+          <option value="">Барлығы</option>
+          <option value="database">SQL Деректер базасы</option>
+          <option value="cpu">CPU бенчмаркі</option>
         </select>
       </div>
 
       <div class="filter-group">
-        <label for="filter-env">Environment</label>
-        <input class="select-input" id="filter-env" type="text" placeholder="e.g. Local" style="width:130px" />
+        <label for="filter-env">Орта</label>
+        <input class="select-input" id="filter-env" type="text" placeholder="Мысалы, Cloud-Neon" style="width:140px" />
       </div>
 
-      <div class="filter-group">
-        <label for="filter-from">From date</label>
-        <input class="date-input" id="filter-from" type="date" />
-      </div>
-
-      <div class="filter-group">
-        <label for="filter-to">To date</label>
-        <input class="date-input" id="filter-to" type="date" />
-      </div>
-
-      <button class="btn-filter" id="apply-filters-btn" type="button">Apply Filters</button>
+      <button class="btn-filter" id="apply-filters-btn" type="button">Сүзгіні қолдану</button>
 
     </div>
 
     <div class="card">
       <div class="table-wrapper">
-        <table id="history-table" aria-label="Benchmark history">
+        <table id="history-table" aria-label="Бенчмарк нәтижелері">
           <thead>
             <tr>
               <th>ID</th>
-              <th>Type</th>
-              <th>Parameter</th>
-              <th>Exec Time</th>
-              <th>CPU %</th>
-              <th>RAM %</th>
-              <th>Environment</th>
-              <th>Timestamp</th>
+              <th>Түрі</th>
+              <th>Параметр</th>
+              <th>Орындалу уақыты</th>
+              <th>Хост CPU %</th>
+              <th>Хост RAM %</th>
+              <th>Орта</th>
+              <th>Уақыты</th>
             </tr>
           </thead>
           <tbody id="history-tbody">
             <tr><td colspan="8" class="text-muted" style="text-align:center;padding:2rem">
-              Switch to this tab to load results.
+              Нәтижелерді жүктеу үшін осы қосымшаға өтіңіз.
             </td></tr>
           </tbody>
         </table>
@@ -390,77 +510,140 @@
 
 
   <!-- ------------------------------------------------
-       4. COMPARE PANEL
+       6. COMPARE PANEL (Local vs Cloud)
        ------------------------------------------------ -->
   <section class="tab-panel" id="compare-panel" role="tabpanel" aria-labelledby="tab-compare">
 
-    <p class="section-title">Local vs Cloud Comparison</p>
+    <p class="section-title">Бұлттық (Cloud) және Жергілікті (Local) орталарды салыстыру</p>
 
     <div class="card mb-2" style="font-size:0.8rem;color:var(--text-secondary);line-height:1.8">
-      This table shows aggregated (average) benchmark results grouped by test type and parameter,
-      pivoted by environment name. Only real stored data is shown — no values are invented.
-      <br/>
-      To add a new environment, deploy this application on another host with a different
-      <code>ENVIRONMENT_NAME</code> in <code>.env</code>, run the same benchmarks, and they
-      will appear here automatically (both instances share the same PostgreSQL database, or
-      you can export/import results).
+      Бұл кестеде тек <strong>нақты өлшенген</strong> эксперименттік деректер көрсетіледі. Жалған немесе қолдан жасалған мәліметтер жоқ.
+      Егер жергілікті ортада әлі сынақ өткізілмесе, ол <em>«Өлшенбеген (Not measured)»</em> деп белгіленеді.
     </div>
 
     <div class="card" id="compare-container">
-      <p class="text-muted">Switch to this tab to load comparison data.</p>
+      <p class="text-muted">Салыстыру деректері жүктелуде…</p>
     </div>
 
   </section><!-- /compare-panel -->
 
 
   <!-- ------------------------------------------------
-       5. CHARTS PANEL
+       7. CHARTS PANEL
        ------------------------------------------------ -->
   <section class="tab-panel" id="charts-panel" role="tabpanel" aria-labelledby="tab-charts">
 
-    <p class="section-title">Performance Charts</p>
-
-    <p id="charts-empty" class="text-muted mb-2" style="display:none">
-      No benchmark data yet. Run some benchmarks first, then switch back to this tab.
-    </p>
+    <p class="section-title">Өнімділік графиктері (Нақты SQL нәтижелері негізінде)</p>
 
     <div class="chart-grid">
 
       <div class="chart-card">
-        <div class="chart-card__title">CPU Utilisation — CPU Benchmarks</div>
-        <div style="height:240px"><canvas id="cpuChart"></canvas></div>
+        <div class="chart-card__title">Индекстеу әсері: Кідірісті азайту (Seq Scan vs B-tree)</div>
+        <div style="height:240px"><canvas id="indexChart"></canvas></div>
       </div>
 
       <div class="chart-card">
-        <div class="chart-card__title">RAM Utilisation — All Benchmarks</div>
-        <div style="height:240px"><canvas id="ramChart"></canvas></div>
+        <div class="chart-card__title">Байланыстар пулы vs Өткізу қабілеті (QPS)</div>
+        <div style="height:240px"><canvas id="poolChart"></canvas></div>
       </div>
 
       <div class="chart-card">
-        <div class="chart-card__title">Execution Time by Type</div>
-        <div style="height:240px"><canvas id="execChart"></canvas></div>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-card__title">Queries / Second — Database Benchmarks</div>
+        <div class="chart-card__title">Сұраныстар бойынша QPS көрсеткіші</div>
         <div style="height:240px"><canvas id="qpsChart"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-card__title">Хост RAM қолданысы (%)</div>
+        <div style="height:240px"><canvas id="ramChart"></canvas></div>
       </div>
 
     </div>
 
     <div class="chart-card" style="margin-top:1.25rem">
-      <div class="chart-card__title">Benchmark Results Over Time</div>
+      <div class="chart-card__title">Сынақтардың орындалу уақыты (Динамика)</div>
       <div style="height:240px"><canvas id="timelineChart"></canvas></div>
     </div>
 
   </section><!-- /charts-panel -->
+
+
+  <!-- ------------------------------------------------
+       8. SCIENTIFIC REPORT PANEL
+       ------------------------------------------------ -->
+  <section class="tab-panel" id="report-panel" role="tabpanel" aria-labelledby="tab-report">
+
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1.5rem;">
+      <p class="section-title" style="margin:0;">Ғылыми зерттеу есебі (Academic Research Report)</p>
+      <div style="display:flex;gap:0.75rem;">
+        <button class="btn-filter" id="btn-refresh-report" type="button">Жаңарту</button>
+        <button class="btn-export" id="btn-print-report" type="button">🖨️ Басып шығару / PDF</button>
+      </div>
+    </div>
+
+    <div class="report-section" id="academic-report-content">
+      <div class="report-header">
+        <div>
+          <div class="report-title-kz">Бұлттық деректер базасының өнімділігін оңтайландыру әдістерін зерттеу</div>
+          <div class="report-subtitle">Research on Cloud Database Performance Optimization Methods</div>
+        </div>
+        <div style="text-align:right;font-size:0.78rem;color:var(--text-muted);">
+          Ғылыми дәреже: Магистрлік диссертация<br/>
+          Күні: <span id="report-date">—</span>
+        </div>
+      </div>
+
+      <h3 style="font-size:1rem;margin:1rem 0 0.5rem;color:var(--text-primary);">1. Зерттеу мақсаты мен міндеттері</h3>
+      <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">
+        Бұл ғылыми жұмыстың мақсаты — бұлттық есептеулер ортасындағы (Neon Serverless PostgreSQL) реляциялық деректер базасының өнімділігіне B-tree индекстерінің, күрделі сұрыптаулардың және байланыстар пулының (Connection Pooling) әсерін математикалық-статистикалық әдістермен зерттеу.
+      </p>
+
+      <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;color:var(--text-primary);">2. Деректер базасының инфрақұрылымы</h3>
+      <div class="stat-grid-academic">
+        <div class="stat-box-academic">
+          <div class="stat-box-academic__label">СУБД Архитектурасы</div>
+          <div class="stat-box-academic__val" id="rep-db-engine" style="font-size:1rem;">PostgreSQL (Neon Cloud)</div>
+        </div>
+        <div class="stat-box-academic">
+          <div class="stat-box-academic__label">Дискілік көлемі</div>
+          <div class="stat-box-academic__val" id="rep-db-size">—</div>
+        </div>
+        <div class="stat-box-academic">
+          <div class="stat-box-academic__label">Пайдаланушылар жазбасы</div>
+          <div class="stat-box-academic__val" id="rep-users-count">—</div>
+        </div>
+        <div class="stat-box-academic">
+          <div class="stat-box-academic__label">Сынақтар саны</div>
+          <div class="stat-box-academic__val" id="rep-experiments-count">—</div>
+        </div>
+      </div>
+
+      <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;color:var(--text-primary);">3. Статистикалық талдау әдістемесі</h3>
+      <div class="formula-card">
+        Орташа мән: $\bar{x} = \frac{1}{n}\sum_{i=1}^n x_i$ &emsp;|&emsp;
+        Стандартты ауытқу: $\sigma = \sqrt{\frac{1}{n-1}\sum_{i=1}^n (x_i - \bar{x})^2}$ &emsp;|&emsp;
+        95% Сенімділік аралығы: $\bar{x} \pm 1.96 \cdot \frac{\sigma}{\sqrt{n}}$
+      </div>
+
+      <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;color:var(--text-primary);">4. Эксперименттік нәтижелер және ғылыми қорытынды</h3>
+      <div class="scientific-summary-box" id="rep-summary-text">
+        Эксперименттік деректер жүктелуде…
+      </div>
+
+      <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;color:var(--text-primary);">5. Зерттеудің шектеулері</h3>
+      <ul style="font-size:0.83rem;color:var(--text-secondary);padding-left:1.5rem;line-height:1.8;">
+        <li>Бұлттық провайдердің желілік кідірісі (Network RTT) мен TLS handshake уақыты клиент пен сервер арасындағы географиялық қашықтыққа тәуелді.</li>
+        <li>PostgreSQL Shared Buffer кэші қайталанатын сұраныстарда нәтижені жеделдететіндіктен, алғашқы "суық" (cold) сұраныстар мен "жылы" (warm) сұраныстар жеке есепке алынды.</li>
+      </ul>
+    </div>
+
+  </section><!-- /report-panel -->
 
 </main><!-- /main-content -->
 
 <!-- Toast container -->
 <div class="toast-container" id="toast-container" role="status" aria-live="polite"></div>
 
-<!-- App JS (loaded after DOM) -->
+<!-- App JS -->
 <script src="/static/js/app.js"></script>
 </body>
 </html>

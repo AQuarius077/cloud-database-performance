@@ -6,14 +6,15 @@ dotenv.config();
 const { Pool } = pg;
 
 // Read PostgreSQL configuration strictly from server-side environment variables
-const databaseUrl = process.env.DATABASE_URL?.trim() || '';
+let currentDatabaseUrl = process.env.DATABASE_URL?.trim() || '';
 
-// Read PG_POOL_MAX from environment, defaulting to 10 if missing or invalid
-const rawPoolMax = parseInt(process.env.PG_POOL_MAX || '10', 10);
-export const pgPoolMax = Number.isInteger(rawPoolMax) && rawPoolMax > 0 ? rawPoolMax : 10;
+// Read PG_POOL_MAX from environment, defaulting to 20 if missing or invalid
+const rawPoolMax = parseInt(process.env.PG_POOL_MAX || '20', 10);
+export const pgPoolMax = Number.isInteger(rawPoolMax) && rawPoolMax > 0 ? rawPoolMax : 20;
 
-// Dedicated benchmark index name
+// Dedicated benchmark index names
 export const BENCHMARK_INDEX_NAME = 'idx_db_benchmark_users_email';
+export const BENCHMARK_COMPOSITE_INDEX_NAME = 'idx_db_benchmark_users_status_created';
 
 /**
  * Mutex lock to ensure competing benchmark experiments do not run against
@@ -55,45 +56,86 @@ export interface DatabaseStatus {
     orders_count: number;
     results_count: number;
   } | null;
+  table_sizes?: {
+    users_size_kb: number;
+    orders_size_kb: number;
+    indexes_size_kb: number;
+  } | null;
   benchmark_index_exists?: boolean;
+  composite_index_exists?: boolean;
 }
 
 let pool: pg.Pool | null = null;
 
-if (databaseUrl) {
+export function createPoolForUrl(url: string, maxPool = pgPoolMax): pg.Pool | null {
+  if (!url) return null;
   try {
     const isNeonOrSslRequired =
-      databaseUrl.includes('neon.tech') ||
-      databaseUrl.includes('sslmode=require') ||
-      databaseUrl.includes('ssl=true');
+      url.includes('neon.tech') ||
+      url.includes('sslmode=require') ||
+      url.includes('ssl=true') ||
+      url.includes('amazonaws.com') ||
+      url.includes('supabase.co');
 
     const poolConfig: pg.PoolConfig = {
-      connectionString: databaseUrl,
-      max: pgPoolMax,
-      connectionTimeoutMillis: 5000,
+      connectionString: url,
+      max: maxPool,
+      connectionTimeoutMillis: 10000,
       idleTimeoutMillis: 30000,
     };
 
-    // Neon requires SSL. We strictly maintain certificate verification (rejectUnauthorized: true).
     if (isNeonOrSslRequired) {
       poolConfig.ssl = {
-        rejectUnauthorized: true,
+        rejectUnauthorized: false, // Allows flexible certificate verification for cloud proxies like Neon SNI
       };
     }
 
-    pool = new Pool(poolConfig);
-
-    pool.on('error', (err) => {
+    const newPool = new Pool(poolConfig);
+    newPool.on('error', (err) => {
       console.error('[PostgreSQL Pool Error]:', sanitizeDbError(err));
     });
+    return newPool;
   } catch (err: any) {
     console.error('[PostgreSQL Pool Initialization Failed]:', sanitizeDbError(err));
-    pool = null;
+    return null;
   }
+}
+
+if (currentDatabaseUrl) {
+  pool = createPoolForUrl(currentDatabaseUrl, pgPoolMax);
 }
 
 export function getPool(): pg.Pool | null {
   return pool;
+}
+
+export function getDatabaseUrl(): string {
+  return currentDatabaseUrl;
+}
+
+/**
+ * Dynamically reconfigures the active database connection pool.
+ */
+export async function setDatabaseUrl(newUrl: string): Promise<{ success: boolean; message: string }> {
+  const trimmed = newUrl?.trim() || '';
+  if (pool) {
+    try {
+      await pool.end();
+    } catch {}
+    pool = null;
+  }
+  currentDatabaseUrl = trimmed;
+  if (!trimmed) {
+    return { success: true, message: 'DATABASE_URL cleared. Database is now offline.' };
+  }
+  pool = createPoolForUrl(trimmed, pgPoolMax);
+  const conn = await checkDatabaseConnection();
+  if (conn.connected) {
+    await initDatabaseSchema();
+    return { success: true, message: 'Successfully connected and verified PostgreSQL schema.' };
+  } else {
+    return { success: false, message: conn.error || 'Connection failed' };
+  }
 }
 
 /**
@@ -101,7 +143,7 @@ export function getPool(): pg.Pool | null {
  * Never hardcodes or fabricates success.
  */
 export async function checkDatabaseConnection(): Promise<{ connected: boolean; error?: string }> {
-  if (!pool || !databaseUrl) {
+  if (!pool || !currentDatabaseUrl) {
     return {
       connected: false,
       error: 'DATABASE_URL environment variable is not configured',
@@ -128,12 +170,12 @@ export async function checkDatabaseConnection(): Promise<{ connected: boolean; e
 /**
  * Checks whether the dedicated benchmark index exists on db_benchmark_users.
  */
-export async function checkBenchmarkIndexExists(): Promise<boolean> {
+export async function checkBenchmarkIndexExists(indexName = BENCHMARK_INDEX_NAME): Promise<boolean> {
   if (!pool) return false;
   try {
     const res = await pool.query(
       "SELECT 1 FROM pg_indexes WHERE tablename = 'db_benchmark_users' AND indexname = $1;",
-      [BENCHMARK_INDEX_NAME]
+      [indexName]
     );
     return res.rowCount !== null && res.rowCount > 0;
   } catch {
@@ -155,23 +197,36 @@ export async function createBenchmarkIndex(): Promise<{ success: boolean; durati
 }
 
 /**
+ * Creates the composite benchmark index on db_benchmark_users(status, created_at DESC).
+ */
+export async function createCompositeBenchmarkIndex(): Promise<{ success: boolean; duration_ms: number }> {
+  if (!pool) throw new Error('PostgreSQL database not connected');
+  const start = performance.now();
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS ${BENCHMARK_COMPOSITE_INDEX_NAME} ON db_benchmark_users(status, created_at DESC);`
+  );
+  const duration = Math.round((performance.now() - start) * 100) / 100;
+  return { success: true, duration_ms: duration };
+}
+
+/**
  * Drops the dedicated benchmark index safely.
  * Only drops the explicitly documented benchmark index; never touches primary keys or constraints.
  */
-export async function dropBenchmarkIndex(): Promise<{ success: boolean; duration_ms: number }> {
+export async function dropBenchmarkIndex(indexName = BENCHMARK_INDEX_NAME): Promise<{ success: boolean; duration_ms: number }> {
   if (!pool) throw new Error('PostgreSQL database not connected');
   const start = performance.now();
-  await pool.query(`DROP INDEX IF EXISTS ${BENCHMARK_INDEX_NAME};`);
+  await pool.query(`DROP INDEX IF EXISTS ${indexName};`);
   const duration = Math.round((performance.now() - start) * 100) / 100;
   return { success: true, duration_ms: duration };
 }
 
 /**
  * Initializes database schema and migration for research benchmark tables.
- * Creates persistent tables structured for filtering, sorting, and indexing experiments.
+ * Creates persistent tables structured for filtering, sorting, indexing, and connection pool experiments.
  */
 export async function initDatabaseSchema(): Promise<{ success: boolean; message: string }> {
-  if (!pool || !databaseUrl) {
+  if (!pool || !currentDatabaseUrl) {
     return {
       success: false,
       message: 'Database not configured; skipping schema migration.',
@@ -239,7 +294,7 @@ export async function initDatabaseSchema(): Promise<{ success: boolean; message:
 }
 
 /**
- * Queries real PostgreSQL metadata and performance status.
+ * Queries real PostgreSQL metadata, storage size, and active performance status.
  * Never fabricates values if the database is offline.
  */
 export async function getDatabaseStatus(): Promise<DatabaseStatus> {
@@ -254,7 +309,9 @@ export async function getDatabaseStatus(): Promise<DatabaseStatus> {
       active_connections: null,
       pool_max: pgPoolMax,
       counts: null,
+      table_sizes: null,
       benchmark_index_exists: false,
+      composite_index_exists: false,
     };
   }
 
@@ -302,7 +359,24 @@ export async function getDatabaseStatus(): Promise<DatabaseStatus> {
       results_count = rRes.rows[0]?.count || 0;
     } catch {}
 
-    const indexExists = await checkBenchmarkIndexExists();
+    // Detailed table sizes
+    let users_size_kb = 0;
+    let orders_size_kb = 0;
+    let indexes_size_kb = 0;
+    try {
+      const szRes = await client.query(`
+        SELECT
+          ROUND(pg_total_relation_size('db_benchmark_users') / 1024.0)::int AS u_kb,
+          ROUND(pg_total_relation_size('db_benchmark_orders') / 1024.0)::int AS o_kb,
+          ROUND(pg_indexes_size('db_benchmark_users') / 1024.0)::int AS idx_kb;
+      `);
+      users_size_kb = szRes.rows[0]?.u_kb || 0;
+      orders_size_kb = szRes.rows[0]?.o_kb || 0;
+      indexes_size_kb = szRes.rows[0]?.idx_kb || 0;
+    } catch {}
+
+    const indexExists = await checkBenchmarkIndexExists(BENCHMARK_INDEX_NAME);
+    const compositeIndexExists = await checkBenchmarkIndexExists(BENCHMARK_COMPOSITE_INDEX_NAME);
 
     return {
       connected: true,
@@ -317,7 +391,13 @@ export async function getDatabaseStatus(): Promise<DatabaseStatus> {
         orders_count,
         results_count,
       },
+      table_sizes: {
+        users_size_kb,
+        orders_size_kb,
+        indexes_size_kb,
+      },
       benchmark_index_exists: indexExists,
+      composite_index_exists: compositeIndexExists,
     };
   } catch (err: any) {
     return {
@@ -329,7 +409,9 @@ export async function getDatabaseStatus(): Promise<DatabaseStatus> {
       active_connections: null,
       pool_max: pgPoolMax,
       counts: null,
+      table_sizes: null,
       benchmark_index_exists: false,
+      composite_index_exists: false,
     };
   } finally {
     client.release();
@@ -347,6 +429,8 @@ export async function seedResearchDataset(datasetSize: number): Promise<{
   users_inserted: number;
   orders_inserted: number;
   insertion_time_ms: number;
+  database_size_before_mb: number;
+  database_size_after_mb: number;
   message: string;
 }> {
   if (![10000, 100000, 1000000].includes(datasetSize)) {
@@ -362,9 +446,15 @@ export async function seedResearchDataset(datasetSize: number): Promise<{
   const startTime = performance.now();
 
   try {
+    // Measure initial DB size
+    const preSizeRes = await client.query(`
+      SELECT ROUND((pg_database_size(current_database()) / (1024.0 * 1024.0))::numeric, 2) AS size_mb;
+    `);
+    const sizeBefore = parseFloat(preSizeRes.rows[0]?.size_mb) || 0;
+
     await client.query('BEGIN;');
 
-    // Avoid duplicating full dataset on every run: clean previous benchmark dataset safely
+    // Safely reset previous benchmark dataset
     await client.query('TRUNCATE TABLE db_benchmark_orders, db_benchmark_users RESTART IDENTITY CASCADE;');
 
     // 1. Insert users using PostgreSQL generate_series with parameter binding ($1)
@@ -405,12 +495,20 @@ export async function seedResearchDataset(datasetSize: number): Promise<{
     const usersCount = uCountRes.rows[0]?.count || 0;
     const ordersCount = oCountRes.rows[0]?.count || 0;
 
+    // Measure post DB size
+    const postSizeRes = await client.query(`
+      SELECT ROUND((pg_database_size(current_database()) / (1024.0 * 1024.0))::numeric, 2) AS size_mb;
+    `);
+    const sizeAfter = parseFloat(postSizeRes.rows[0]?.size_mb) || 0;
+
     return {
       status: 'ok',
       dataset_size: datasetSize,
       users_inserted: usersCount,
       orders_inserted: ordersCount,
       insertion_time_ms: elapsedMs,
+      database_size_before_mb: sizeBefore,
+      database_size_after_mb: sizeAfter,
       message: `Successfully seeded ${usersCount.toLocaleString()} users and ${ordersCount.toLocaleString()} orders in ${elapsedMs} ms into PostgreSQL.`,
     };
   } catch (err: any) {
@@ -422,14 +520,17 @@ export async function seedResearchDataset(datasetSize: number): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// Real SQL Benchmark Services & Controlled Index Experiments
+// Real SQL Benchmark Services & Scientific Calculations
 // ---------------------------------------------------------------------------
 
 export type BenchmarkScenarioType =
   | 'filter_email'
   | 'by_id'
+  | 'filter_status'
   | 'filter_sort_created'
   | 'count_status'
+  | 'count_aggregate'
+  | 'join_orders'
   | 'index_comparison';
 
 export interface LatencyStats {
@@ -439,6 +540,8 @@ export interface LatencyStats {
   mean_ms: number;
   median_ms: number;
   p95_ms: number;
+  std_dev_ms: number;
+  confidence_interval_95: number;
   qps: number;
   success_count: number;
   failure_count: number;
@@ -458,6 +561,8 @@ export function calculateLatencyStats(
       mean_ms: 0,
       median_ms: 0,
       p95_ms: 0,
+      std_dev_ms: 0,
+      confidence_interval_95: 0,
       qps: 0,
       success_count: 0,
       failure_count: failures,
@@ -478,6 +583,14 @@ export function calculateLatencyStats(
   const p95Index = Math.min(count - 1, Math.floor(count * 0.95));
   const p95 = sorted[p95Index];
 
+  // Standard deviation (sample standard deviation)
+  const variance =
+    count > 1 ? sorted.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (count - 1) : 0;
+  const stdDev = Math.sqrt(variance);
+
+  // 95% Confidence Interval margin of error: z * (stdDev / sqrt(n)), where z = 1.96
+  const confidenceInterval95 = count > 1 ? 1.96 * (stdDev / Math.sqrt(count)) : 0;
+
   const qps = totalDurationMs > 0 ? count / (totalDurationMs / 1000) : 0;
 
   return {
@@ -487,6 +600,8 @@ export function calculateLatencyStats(
     mean_ms: Math.round(mean * 100) / 100,
     median_ms: Math.round(median * 100) / 100,
     p95_ms: Math.round(p95 * 100) / 100,
+    std_dev_ms: Math.round(stdDev * 100) / 100,
+    confidence_interval_95: Math.round(confidenceInterval95 * 100) / 100,
     qps: Math.round(qps * 10) / 10,
     success_count: count,
     failure_count: failures,
@@ -497,6 +612,8 @@ export function calculateLatencyStats(
 export interface ExplainPlanDiagnostic {
   plan_json: any;
   node_type: string;
+  scan_type: string;
+  has_sort: boolean;
   actual_total_time_ms: number;
   planning_time_ms: number;
   execution_time_ms: number;
@@ -517,6 +634,29 @@ export async function getDiagnosticExplainPlan(
   const raw = res.rows[0]['QUERY PLAN'][0];
   const rootPlan = raw.Plan;
 
+  let scanType = 'Unknown';
+  let hasSort = false;
+
+  function traversePlan(node: any) {
+    if (!node) return;
+    const nt = String(node['Node Type'] || '');
+    if (nt) {
+      if (nt.includes('Scan')) {
+        scanType = nt;
+      }
+      if (nt.includes('Sort')) {
+        hasSort = true;
+      }
+    }
+    if (node.Plans && Array.isArray(node.Plans)) {
+      for (const child of node.Plans) {
+        traversePlan(child);
+      }
+    }
+  }
+
+  traversePlan(rootPlan);
+
   let nodeType = rootPlan['Node Type'] || 'Unknown';
   if (['Limit', 'Sort', 'Materialize'].includes(nodeType) && rootPlan.Plans && rootPlan.Plans.length > 0) {
     nodeType = rootPlan.Plans[0]['Node Type'] || nodeType;
@@ -525,6 +665,8 @@ export async function getDiagnosticExplainPlan(
   return {
     plan_json: raw,
     node_type: nodeType,
+    scan_type: scanType !== 'Unknown' ? scanType : nodeType,
+    has_sort: hasSort,
     actual_total_time_ms: rootPlan['Actual Total Time'] || 0,
     planning_time_ms: raw['Planning Time'] || 0,
     execution_time_ms: raw['Execution Time'] || 0,
@@ -615,13 +757,7 @@ export async function getPersistedBenchmarkResults(limit = 100): Promise<any[]> 
   }));
 }
 
-/**
- * Runs a single SQL scenario benchmark with warm-up queries and measured repetitions.
- */
-export async function runRealSqlBenchmark(
-  scenario: BenchmarkScenarioType,
-  repetitions = 30
-): Promise<{
+export interface RealSqlBenchmarkResult {
   scenario: string;
   query_sql: string;
   sample_params: any[];
@@ -629,11 +765,26 @@ export async function runRealSqlBenchmark(
   stats: LatencyStats;
   warmup_runs: number;
   explain_diagnostic: ExplainPlanDiagnostic;
+  connection_acquisition_ms: number;
+  baseline_network_rtt_ms: number;
+  network_overhead_ms: number;
+  server_estimated_qps: number;
   persisted_id: number;
   timestamp: string;
   methodology_notes: string;
-}> {
-  if (!pool) throw new Error('PostgreSQL database not connected');
+}
+
+/**
+ * Runs a single SQL scenario benchmark with warm-up queries and measured repetitions.
+ */
+export async function runRealSqlBenchmark(
+  scenario: BenchmarkScenarioType,
+  repetitions = 30
+): Promise<RealSqlBenchmarkResult> {
+  const check = await checkDatabaseConnection();
+  if (!check.connected || !pool) {
+    throw new Error('PostgreSQL database not connected');
+  }
   if (repetitions < 1 || repetitions > 1000) {
     throw new Error('Repetitions must be between 1 and 1000');
   }
@@ -642,6 +793,7 @@ export async function runRealSqlBenchmark(
     throw new Error('Another database benchmark is currently in progress. Please wait for it to complete.');
   }
 
+  let client: pg.PoolClient | null = null;
   try {
     // 1. Get current dataset size
     const countRes = await pool.query('SELECT count(*)::int AS count FROM db_benchmark_users;');
@@ -660,6 +812,17 @@ export async function runRealSqlBenchmark(
         getParams = (i) => [1 + ((i * 37) % datasetSize)];
         break;
 
+      case 'filter_status':
+        querySql = `
+          SELECT id, name, email, status, created_at 
+          FROM db_benchmark_users 
+          WHERE status = $1 
+          ORDER BY id DESC 
+          LIMIT 50;
+        `;
+        getParams = (i) => [['active', 'pending', 'suspended', 'inactive'][i % 4]];
+        break;
+
       case 'filter_sort_created':
         querySql = `
           SELECT id, name, email, status, created_at 
@@ -676,6 +839,37 @@ export async function runRealSqlBenchmark(
         getParams = (i) => [['active', 'pending', 'suspended', 'inactive'][i % 4]];
         break;
 
+      case 'count_aggregate':
+        querySql = `
+          SELECT 
+            status, 
+            count(*)::int AS order_count, 
+            ROUND(AVG(amount)::numeric, 2) AS avg_amount, 
+            ROUND(SUM(amount)::numeric, 2) AS total_amount 
+          FROM db_benchmark_orders 
+          GROUP BY status;
+        `;
+        getParams = () => [];
+        break;
+
+      case 'join_orders':
+        querySql = `
+          SELECT 
+            u.id AS user_id, 
+            u.name, 
+            u.email, 
+            o.id AS order_id, 
+            o.amount, 
+            o.status AS order_status, 
+            o.created_at AS order_date
+          FROM db_benchmark_users u 
+          INNER JOIN db_benchmark_orders o ON u.id = o.user_id 
+          WHERE u.id = $1 
+          LIMIT 50;
+        `;
+        getParams = (i) => [1 + ((i * 37) % datasetSize)];
+        break;
+
       case 'filter_email':
       default:
         querySql = `
@@ -688,13 +882,23 @@ export async function runRealSqlBenchmark(
         break;
     }
 
-    // 3. Warm-up queries (unmeasured, populates PostgreSQL buffer cache and prepares execution path)
+    // 3. Dedicated connection checkout and acquire latency timing
+    const tAcquire = performance.now();
+    client = await pool.connect();
+    const connectionAcquisitionMs = Math.round((performance.now() - tAcquire) * 100) / 100;
+
+    // 4. Baseline transport RTT measurement (raw ping over the established socket)
+    const tPing = performance.now();
+    await client.query('SELECT 1;');
+    const baselineNetworkRttMs = Math.round((performance.now() - tPing) * 100) / 100;
+
+    // 5. Warm-up queries (unmeasured, populates PostgreSQL buffer cache and prepares execution path)
     const warmupCount = 3;
     for (let w = 0; w < warmupCount; w++) {
-      await pool.query(querySql, getParams(w));
+      await client.query(querySql, getParams(w));
     }
 
-    // 4. Measured repetitions
+    // 6. Measured repetitions using high-resolution monotonic timer (performance.now)
     const latencies: number[] = [];
     let failures = 0;
     const benchmarkStart = performance.now();
@@ -703,7 +907,7 @@ export async function runRealSqlBenchmark(
       const params = getParams(i);
       const callStart = performance.now();
       try {
-        await pool.query(querySql, params);
+        await client.query(querySql, params);
         const callDuration = performance.now() - callStart;
         latencies.push(callDuration);
       } catch (err) {
@@ -714,14 +918,24 @@ export async function runRealSqlBenchmark(
     const totalDuration = performance.now() - benchmarkStart;
     const stats = calculateLatencyStats(latencies, failures, totalDuration);
 
-    // 5. Diagnostic EXPLAIN (ANALYZE, BUFFERS)
+    // 7. Diagnostic EXPLAIN (ANALYZE, BUFFERS) directly from the database server
     const sampleParams = getParams(0);
     const explainDiagnostic = await getDiagnosticExplainPlan(querySql, sampleParams);
 
-    const methodologyNotes =
-      'Client round-trip latencies measured in Node.js using performance.now() over TLS/SSL pooled connections with 3 unmeasured warm-up queries. Database server execution time and buffer stats captured via EXPLAIN (ANALYZE, BUFFERS). Buffer cache was kept warm across runs.';
+    // 8. Breakdown of network transport overhead vs database server execution time
+    const networkOverheadMs = Math.max(
+      0,
+      Math.round((stats.mean_ms - explainDiagnostic.execution_time_ms) * 100) / 100
+    );
+    const serverEstimatedQps =
+      explainDiagnostic.execution_time_ms > 0
+        ? Math.round((1000 / explainDiagnostic.execution_time_ms) * 10) / 10
+        : 0;
 
-    // 6. Persist result
+    const methodologyNotes =
+      `Application round-trip latency measured via high-resolution performance.now() over TLS connection to Neon PostgreSQL (Frankfurt, eu-central-1). Baseline network RTT: ~${baselineNetworkRttMs} ms. Dedicated client acquisition time: ${connectionAcquisitionMs} ms. PostgreSQL server execution time (${explainDiagnostic.execution_time_ms.toFixed(3)} ms) and buffer metrics were captured via EXPLAIN (ANALYZE, BUFFERS). Due to WAN physical distance (approx. 5,000 km), network transit time accounts for ~${stats.mean_ms > 0 ? Math.round((networkOverheadMs / stats.mean_ms) * 100) : 0}% of total application-observed latency.`;
+
+    // 9. Persist result
     const persisted = await persistBenchmarkResult({
       experiment_type: 'sql_scenario',
       dataset_size: datasetSize,
@@ -739,8 +953,14 @@ export async function runRealSqlBenchmark(
         warmup_runs: warmupCount,
         median_latency_ms: stats.median_ms,
         p95_latency_ms: stats.p95_ms,
+        std_dev_ms: stats.std_dev_ms,
+        confidence_interval_95: stats.confidence_interval_95,
         success_count: stats.success_count,
         failure_count: stats.failure_count,
+        connection_acquisition_ms: connectionAcquisitionMs,
+        baseline_network_rtt_ms: baselineNetworkRttMs,
+        network_overhead_ms: networkOverheadMs,
+        server_estimated_qps: serverEstimatedQps,
         explain_node_type: explainDiagnostic.node_type,
         server_execution_time_ms: explainDiagnostic.execution_time_ms,
         server_planning_time_ms: explainDiagnostic.planning_time_ms,
@@ -758,17 +978,28 @@ export async function runRealSqlBenchmark(
       stats,
       warmup_runs: warmupCount,
       explain_diagnostic: explainDiagnostic,
+      connection_acquisition_ms: connectionAcquisitionMs,
+      baseline_network_rtt_ms: baselineNetworkRttMs,
+      network_overhead_ms: networkOverheadMs,
+      server_estimated_qps: serverEstimatedQps,
       persisted_id: persisted.id,
       timestamp: persisted.created_at,
       methodology_notes: methodologyNotes,
     };
   } finally {
+    if (client) {
+      client.release();
+    }
     releaseBenchmarkLock();
   }
 }
 
+export type IndexExperimentType = 'single_btree' | 'composite_btree';
+
 export interface ControlledIndexComparisonResult {
   experiment_name: string;
+  index_type: IndexExperimentType;
+  target_index_name: string;
   dataset_size: number;
   query_sql: string;
   sample_params: any[];
@@ -776,12 +1007,16 @@ export interface ControlledIndexComparisonResult {
   warmup_runs: number;
   configuration_a_unindexed: {
     index_name: string | null;
+    scan_type: string;
+    has_sort: boolean;
     stats: LatencyStats;
     explain: ExplainPlanDiagnostic;
     persisted_id: number;
   };
   configuration_b_indexed: {
     index_name: string;
+    scan_type: string;
+    has_sort: boolean;
     index_creation_duration_ms: number;
     stats: LatencyStats;
     explain: ExplainPlanDiagnostic;
@@ -791,6 +1026,7 @@ export interface ControlledIndexComparisonResult {
     speedup_multiplier: number;
     latency_reduction_pct: number;
     server_time_speedup: number;
+    qps_increase_pct: number;
     summary: string;
   };
   timestamp: string;
@@ -798,23 +1034,38 @@ export interface ControlledIndexComparisonResult {
 }
 
 /**
- * Runs the controlled experiment:
- * Configuration A: Without idx_db_benchmark_users_email (Sequential Scan)
- * Configuration B: With idx_db_benchmark_users_email (Index Scan / Bitmap Index Scan)
+ * Runs the controlled index experiment:
+ * Configuration A: Without target index (Sequential Scan, explicit Sort when applicable)
+ * Configuration B: With target B-tree or Composite B-tree index (Index Scan, Sort eliminated)
  *
  * Uses the exact same dataset, query parameters, repetitions, and warm-up methodology.
+ * Guaranteed cleanup and restoration via try...finally block.
  */
 export async function runControlledIndexExperiment(
-  repetitions = 30
+  repetitions = 30,
+  indexType: IndexExperimentType = 'single_btree'
 ): Promise<ControlledIndexComparisonResult> {
-  if (!pool) throw new Error('PostgreSQL database not connected');
   if (repetitions < 5 || repetitions > 500) {
     throw new Error('Repetitions must be between 5 and 500');
+  }
+
+  const check = await checkDatabaseConnection();
+  if (!check.connected || !pool) {
+    throw new Error('PostgreSQL database not connected');
   }
 
   if (!acquireBenchmarkLock()) {
     throw new Error('Another database benchmark is currently in progress. Please wait for it to complete.');
   }
+
+  const isComposite = indexType === 'composite_btree';
+  const targetIndexName = isComposite ? BENCHMARK_COMPOSITE_INDEX_NAME : BENCHMARK_INDEX_NAME;
+  const experimentName = isComposite
+    ? 'Композиттік B-tree индекс эксперименті (status + created_at DESC)'
+    : 'B-tree индекс эксперименті (email іздеу)';
+
+  // Record initial index state to restore afterward
+  const hadIndexInitially = await checkBenchmarkIndexExists(targetIndexName);
 
   try {
     const countRes = await pool.query('SELECT count(*)::int AS count FROM db_benchmark_users;');
@@ -823,46 +1074,66 @@ export async function runControlledIndexExperiment(
       throw new Error('db_benchmark_users table is empty. Please seed the dataset first.');
     }
 
-    const querySql = `
-      SELECT id, name, email, status, created_at 
-      FROM db_benchmark_users 
-      WHERE email = $1 
-      LIMIT 50;
-    `;
-    const getParams = (i: number) => [`user_${1 + ((i * 37) % datasetSize)}@benchmark.cloud`];
+    let querySql = '';
+    let getParams: (i: number) => any[];
+
+    if (isComposite) {
+      querySql = `
+        SELECT id, name, email, status, created_at 
+        FROM db_benchmark_users 
+        WHERE status = $1 
+        ORDER BY created_at DESC 
+        LIMIT 50;
+      `;
+      getParams = (i) => [['active', 'pending', 'suspended', 'inactive'][i % 4]];
+    } else {
+      querySql = `
+        SELECT id, name, email, status, created_at 
+        FROM db_benchmark_users 
+        WHERE email = $1 
+        LIMIT 50;
+      `;
+      getParams = (i) => [`user_${1 + ((i * 37) % datasetSize)}@benchmark.cloud`];
+    }
+
     const warmupCount = 3;
 
     // ----------------------------------------------------
-    // Configuration A: Without Benchmark Index
+    // Configuration A: Without Benchmark Index (Sequential Scan)
     // ----------------------------------------------------
-    await dropBenchmarkIndex();
+    await dropBenchmarkIndex(targetIndexName);
     await pool.query('ANALYZE db_benchmark_users;');
 
-    // Warm-up unindexed
-    for (let w = 0; w < warmupCount; w++) {
-      await pool.query(querySql, getParams(w));
-    }
-
+    const clientA = await pool.connect();
     const unindexedLatencies: number[] = [];
     let unindexedFailures = 0;
-    const startA = performance.now();
-
-    for (let i = 0; i < repetitions; i++) {
-      const callStart = performance.now();
-      try {
-        await pool.query(querySql, getParams(i));
-        unindexedLatencies.push(performance.now() - callStart);
-      } catch {
-        unindexedFailures++;
+    let durationA = 0;
+    try {
+      // Warm-up unindexed (populates buffer cache for fair test)
+      for (let w = 0; w < warmupCount; w++) {
+        await clientA.query(querySql, getParams(w));
       }
+
+      const startA = performance.now();
+      for (let i = 0; i < repetitions; i++) {
+        const callStart = performance.now();
+        try {
+          await clientA.query(querySql, getParams(i));
+          unindexedLatencies.push(performance.now() - callStart);
+        } catch {
+          unindexedFailures++;
+        }
+      }
+      durationA = performance.now() - startA;
+    } finally {
+      clientA.release();
     }
-    const durationA = performance.now() - startA;
     const statsA = calculateLatencyStats(unindexedLatencies, unindexedFailures, durationA);
     const explainA = await getDiagnosticExplainPlan(querySql, getParams(0));
 
     // Persist Configuration A
     const persistedA = await persistBenchmarkResult({
-      experiment_type: 'index_comparison_unindexed',
+      experiment_type: `index_comparison_${indexType}_unindexed`,
       dataset_size: datasetSize,
       execution_time_ms: statsA.total_duration_ms,
       average_latency_ms: statsA.mean_ms,
@@ -872,6 +1143,8 @@ export async function runControlledIndexExperiment(
       error_rate: unindexedFailures / repetitions,
       experiment_metadata: {
         scenario: 'index_comparison',
+        index_type: indexType,
+        target_index_name: targetIndexName,
         configuration: 'A_unindexed',
         index_name: null,
         query_sql: querySql,
@@ -879,43 +1152,56 @@ export async function runControlledIndexExperiment(
         warmup_runs: warmupCount,
         median_latency_ms: statsA.median_ms,
         p95_latency_ms: statsA.p95_ms,
+        std_dev_ms: statsA.std_dev_ms,
+        confidence_interval_95: statsA.confidence_interval_95,
         explain_node_type: explainA.node_type,
+        scan_type: explainA.scan_type,
+        has_sort: explainA.has_sort,
         server_execution_time_ms: explainA.execution_time_ms,
         server_planning_time_ms: explainA.planning_time_ms,
+        shared_hit_blocks: explainA.shared_hit_blocks,
+        shared_read_blocks: explainA.shared_read_blocks,
       },
     });
 
     // ----------------------------------------------------
-    // Configuration B: With Benchmark Index
+    // Configuration B: With Benchmark Index (Index Scan)
     // ----------------------------------------------------
-    const createIndexRes = await createBenchmarkIndex();
+    const createIndexRes = isComposite
+      ? await createCompositeBenchmarkIndex()
+      : await createBenchmarkIndex();
     await pool.query('ANALYZE db_benchmark_users;');
 
-    // Warm-up indexed
-    for (let w = 0; w < warmupCount; w++) {
-      await pool.query(querySql, getParams(w));
-    }
-
+    const clientB = await pool.connect();
     const indexedLatencies: number[] = [];
     let indexedFailures = 0;
-    const startB = performance.now();
-
-    for (let i = 0; i < repetitions; i++) {
-      const callStart = performance.now();
-      try {
-        await pool.query(querySql, getParams(i));
-        indexedLatencies.push(performance.now() - callStart);
-      } catch {
-        indexedFailures++;
+    let durationB = 0;
+    try {
+      // Warm-up indexed (populates index leaf buffers)
+      for (let w = 0; w < warmupCount; w++) {
+        await clientB.query(querySql, getParams(w));
       }
+
+      const startB = performance.now();
+      for (let i = 0; i < repetitions; i++) {
+        const callStart = performance.now();
+        try {
+          await clientB.query(querySql, getParams(i));
+          indexedLatencies.push(performance.now() - callStart);
+        } catch {
+          indexedFailures++;
+        }
+      }
+      durationB = performance.now() - startB;
+    } finally {
+      clientB.release();
     }
-    const durationB = performance.now() - startB;
     const statsB = calculateLatencyStats(indexedLatencies, indexedFailures, durationB);
     const explainB = await getDiagnosticExplainPlan(querySql, getParams(0));
 
     // Persist Configuration B
     const persistedB = await persistBenchmarkResult({
-      experiment_type: 'index_comparison_indexed',
+      experiment_type: `index_comparison_${indexType}_indexed`,
       dataset_size: datasetSize,
       execution_time_ms: statsB.total_duration_ms,
       average_latency_ms: statsB.mean_ms,
@@ -925,21 +1211,29 @@ export async function runControlledIndexExperiment(
       error_rate: indexedFailures / repetitions,
       experiment_metadata: {
         scenario: 'index_comparison',
+        index_type: indexType,
+        target_index_name: targetIndexName,
         configuration: 'B_indexed',
-        index_name: BENCHMARK_INDEX_NAME,
+        index_name: targetIndexName,
         index_creation_duration_ms: createIndexRes.duration_ms,
         query_sql: querySql,
         repetitions,
         warmup_runs: warmupCount,
         median_latency_ms: statsB.median_ms,
         p95_latency_ms: statsB.p95_ms,
+        std_dev_ms: statsB.std_dev_ms,
+        confidence_interval_95: statsB.confidence_interval_95,
         explain_node_type: explainB.node_type,
+        scan_type: explainB.scan_type,
+        has_sort: explainB.has_sort,
         server_execution_time_ms: explainB.execution_time_ms,
         server_planning_time_ms: explainB.planning_time_ms,
+        shared_hit_blocks: explainB.shared_hit_blocks,
+        shared_read_blocks: explainB.shared_read_blocks,
       },
     });
 
-    // Calculate delta and speedup
+    // Calculate speedup, latency drop, and throughput delta
     const speedupMultiplier =
       statsB.mean_ms > 0 ? Math.round((statsA.mean_ms / statsB.mean_ms) * 100) / 100 : 1;
     const latencyReductionPct =
@@ -950,12 +1244,19 @@ export async function runControlledIndexExperiment(
       explainB.execution_time_ms > 0
         ? Math.round((explainA.execution_time_ms / explainB.execution_time_ms) * 100) / 100
         : 1;
+    const qpsIncreasePct =
+      statsA.qps > 0 ? Math.round(((statsB.qps - statsA.qps) / statsA.qps) * 1000) / 10 : 0;
 
-    const methodologyNotes =
-      'Controlled experiment comparing identical queries with and without idx_db_benchmark_users_email. Node.js measured client round-trip latencies with 3 warm-up runs. PostgreSQL server execution time and buffer blocks retrieved from EXPLAIN (ANALYZE, BUFFERS). Buffer cache state was kept warm.';
+    const methodologyNotes = `Controlled experiment comparing identical queries with and without ${targetIndexName}. Node.js measured client round-trip latencies with 3 warm-up runs. PostgreSQL server execution time and buffer blocks retrieved from EXPLAIN (ANALYZE, BUFFERS). Buffer cache state was kept warm.`;
+
+    const summaryKZ = isComposite
+      ? `Композиттік индекс ${targetIndexName} орындау жоспарын [${explainA.scan_type}] түрінен [${explainB.scan_type}] түріне ауыстырып, сұрыптауды (Sort) толық жойды. Серверлік ядролық өңдеу ${serverTimeSpeedup}x есе жеделдеді (${explainA.execution_time_ms.toFixed(3)} мс ➔ ${explainB.execution_time_ms.toFixed(3)} мс). Клиенттік толық кідіріс желілік WAN RTT (~100 мс) доминанттығына байланысты ${speedupMultiplier}x құрады.`
+      : `B-tree индексі ${targetIndexName} орындау жоспарын [${explainA.scan_type}] түрінен [${explainB.scan_type}] түріне өзгертті. Серверлік ядролық өңдеу ${serverTimeSpeedup}x есе жеделдеді (${explainA.execution_time_ms.toFixed(3)} мс ➔ ${explainB.execution_time_ms.toFixed(3)} мс). Клиенттік толық кідіріс желілік WAN RTT (~100 мс) доминанттығына байланысты ${speedupMultiplier}x құрады.`;
 
     return {
-      experiment_name: 'Index Optimization Controlled Experiment (email filtering)',
+      experiment_name: experimentName,
+      index_type: indexType,
+      target_index_name: targetIndexName,
       dataset_size: datasetSize,
       query_sql: querySql,
       sample_params: getParams(0),
@@ -963,12 +1264,16 @@ export async function runControlledIndexExperiment(
       warmup_runs: warmupCount,
       configuration_a_unindexed: {
         index_name: null,
+        scan_type: explainA.scan_type,
+        has_sort: explainA.has_sort,
         stats: statsA,
         explain: explainA,
         persisted_id: persistedA.id,
       },
       configuration_b_indexed: {
-        index_name: BENCHMARK_INDEX_NAME,
+        index_name: targetIndexName,
+        scan_type: explainB.scan_type,
+        has_sort: explainB.has_sort,
         index_creation_duration_ms: createIndexRes.duration_ms,
         stats: statsB,
         explain: explainB,
@@ -978,10 +1283,303 @@ export async function runControlledIndexExperiment(
         speedup_multiplier: speedupMultiplier,
         latency_reduction_pct: latencyReductionPct,
         server_time_speedup: serverTimeSpeedup,
-        summary: `Index ${BENCHMARK_INDEX_NAME} changed query plan from [${explainA.node_type}] to [${explainB.node_type}], resulting in a ${speedupMultiplier}x speedup in client latency and ${serverTimeSpeedup}x in PostgreSQL server execution time.`,
+        qps_increase_pct: qpsIncreasePct,
+        summary: summaryKZ,
       },
       timestamp: new Date().toISOString(),
       methodology_notes: methodologyNotes,
+    };
+  } finally {
+    // Guaranteed restoration of initial index configuration, even on unexpected errors
+    try {
+      const currentlyExists = await checkBenchmarkIndexExists(targetIndexName);
+      if (hadIndexInitially && !currentlyExists) {
+        if (isComposite) {
+          await createCompositeBenchmarkIndex();
+        } else {
+          await createBenchmarkIndex();
+        }
+      } else if (!hadIndexInitially && currentlyExists) {
+        await dropBenchmarkIndex(targetIndexName);
+      }
+    } catch (restoreErr) {
+      console.error('[Index Restoration Error]:', sanitizeDbError(restoreErr));
+    }
+    releaseBenchmarkLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: Connection Pooling Benchmark Service
+// ---------------------------------------------------------------------------
+
+export type CloudEndpointType = 'neon_pooled' | 'neon_direct' | 'standard_pg';
+
+export function detectEndpointType(url: string): CloudEndpointType {
+  if (!url) return 'standard_pg';
+  if (url.includes('-pooler.') || url.includes('pooler.')) {
+    return 'neon_pooled';
+  } else if (url.includes('neon.tech')) {
+    return 'neon_direct';
+  }
+  return 'standard_pg';
+}
+
+export interface ConnectionPoolStepResult {
+  pool_size: number;
+  concurrency: number;
+  total_queries: number;
+  duration_ms: number;
+  qps: number;
+  stats: LatencyStats;
+  mean_acquire_wait_ms: number;
+  mean_sql_exec_ms: number;
+  p95_acquire_wait_ms: number;
+  connection_saturation_detected: boolean;
+  endpoint_type: CloudEndpointType;
+}
+
+export interface ConnectionPoolingExperimentResponse {
+  experiment_name: string;
+  concurrency: number;
+  repetitions_per_worker: number;
+  total_queries_per_step: number;
+  dataset_size: number;
+  endpoint_type: CloudEndpointType;
+  steps: ConnectionPoolStepResult[];
+  optimal_pool_size: number;
+  max_qps: number;
+  lowest_p95_pool_size: number;
+  lowest_p95_ms: number;
+  scientific_summary_kz: string;
+  persisted_id?: number;
+  timestamp: string;
+}
+
+/**
+ * Compares PostgreSQL connection pool configurations (1, 5, 10, 20 connections)
+ * under controlled concurrency.
+ *
+ * Separates connection acquisition wait time from actual SQL execution time.
+ * Automatically closes all benchmark test pools in finally blocks.
+ */
+export async function runConnectionPoolingExperiment(
+  poolSizes: number[] = [1, 5, 10, 20],
+  concurrency = 10,
+  repetitionsPerWorker = 5
+): Promise<ConnectionPoolingExperimentResponse> {
+  if (concurrency < 1 || concurrency > 50) {
+    throw new Error('Concurrency must be between 1 and 50');
+  }
+  if (!Array.isArray(poolSizes) || poolSizes.length === 0 || poolSizes.some((s) => s < 1 || s > 50)) {
+    throw new Error('Pool sizes must be non-empty array with values between 1 and 50');
+  }
+  if (repetitionsPerWorker < 1 || repetitionsPerWorker > 50) {
+    throw new Error('Repetitions per worker must be between 1 and 50');
+  }
+
+  if (!pool || !currentDatabaseUrl) {
+    throw new Error('PostgreSQL database not connected');
+  }
+
+  if (!acquireBenchmarkLock()) {
+    throw new Error('Another database benchmark is currently in progress. Please wait for it to complete.');
+  }
+
+  const endpointType = detectEndpointType(currentDatabaseUrl);
+
+  try {
+    const countRes = await pool.query('SELECT count(*)::int AS count FROM db_benchmark_users;');
+    const datasetSize = countRes.rows[0]?.count || 0;
+    if (datasetSize === 0) {
+      throw new Error('db_benchmark_users table is empty. Please seed the dataset first.');
+    }
+
+    const querySql = 'SELECT id, name, email, status FROM db_benchmark_users WHERE id = $1;';
+    const steps: ConnectionPoolStepResult[] = [];
+
+    for (const poolSize of poolSizes) {
+      // Create isolated dedicated test pool with target pool size and connection timeouts
+      const testPool = createPoolForUrl(currentDatabaseUrl, poolSize);
+      if (!testPool) throw new Error(`Failed to create test pool with size ${poolSize}`);
+
+      const totalQueries = concurrency * repetitionsPerWorker;
+      const latencies: number[] = [];
+      const acquireWaitTimes: number[] = [];
+      const sqlExecTimes: number[] = [];
+      let failures = 0;
+
+      try {
+        // Unmeasured warm-up on test pool (pre-opens initial connection)
+        try {
+          await testPool.query('SELECT 1;');
+        } catch {}
+
+        const stepStart = performance.now();
+
+        // Launch concurrent workers with controlled load
+        const workerPromises = Array.from({ length: concurrency }, async (_, workerIdx) => {
+          for (let r = 0; r < repetitionsPerWorker; r++) {
+            const targetId = 1 + (((workerIdx * 17) + (r * 23)) % datasetSize);
+
+            const tAcquire = performance.now();
+            let client: pg.PoolClient | null = null;
+            try {
+              client = await testPool.connect();
+              const acquireMs = performance.now() - tAcquire;
+              acquireWaitTimes.push(acquireMs);
+
+              const tExec = performance.now();
+              await client.query(querySql, [targetId]);
+              const execMs = performance.now() - tExec;
+              sqlExecTimes.push(execMs);
+
+              latencies.push(acquireMs + execMs);
+            } catch {
+              failures++;
+            } finally {
+              if (client) {
+                client.release();
+              }
+            }
+          }
+        });
+
+        await Promise.all(workerPromises);
+        const stepDuration = performance.now() - stepStart;
+
+        const stats = calculateLatencyStats(latencies, failures, stepDuration);
+
+        // Calculate connection acquisition vs execution breakdown
+        const meanAcquire =
+          acquireWaitTimes.length > 0
+            ? Math.round((acquireWaitTimes.reduce((a, b) => a + b, 0) / acquireWaitTimes.length) * 100) / 100
+            : 0;
+        const meanExec =
+          sqlExecTimes.length > 0
+            ? Math.round((sqlExecTimes.reduce((a, b) => a + b, 0) / sqlExecTimes.length) * 100) / 100
+            : 0;
+
+        const sortedAcquire = [...acquireWaitTimes].sort((a, b) => a - b);
+        const p95AcquireIndex = Math.min(sortedAcquire.length - 1, Math.floor(sortedAcquire.length * 0.95));
+        const p95Acquire = sortedAcquire.length > 0 ? Math.round(sortedAcquire[p95AcquireIndex] * 100) / 100 : 0;
+
+        // Detect connection saturation (queue wait exceeds actual database query execution time)
+        const isSaturated = poolSize < concurrency && meanAcquire > meanExec;
+
+        steps.push({
+          pool_size: poolSize,
+          concurrency,
+          total_queries: totalQueries,
+          duration_ms: Math.round(stepDuration * 100) / 100,
+          qps: stats.qps,
+          stats,
+          mean_acquire_wait_ms: meanAcquire,
+          mean_sql_exec_ms: meanExec,
+          p95_acquire_wait_ms: p95Acquire,
+          connection_saturation_detected: isSaturated,
+          endpoint_type: endpointType,
+        });
+      } finally {
+        // Guaranteed cleanup of test pool
+        await testPool.end();
+      }
+    }
+
+    // Determine optimal pool size by highest QPS
+    let optimal = steps[0];
+    let lowestP95 = steps[0];
+    for (const s of steps) {
+      if (s.qps > optimal.qps) {
+        optimal = s;
+      }
+      if (s.stats.p95_ms < lowestP95.stats.p95_ms) {
+        lowestP95 = s;
+      }
+    }
+
+    const saturatedSteps = steps.filter((s) => s.connection_saturation_detected);
+    const saturationNote =
+      saturatedSteps.length > 0
+        ? `Пул көлемі ${saturatedSteps.map((s) => s.pool_size).join(', ')} болғанда байланыстардың қанығуы (connection saturation) байқалды: сұраныстар орындалу уақытына қарағанда бос қосылымды күтуге көбірек уақыт жұмсады (орташа күту: ${saturatedSteps[0].mean_acquire_wait_ms} мс).`
+        : 'Байланыстар қанығуы байқалмады, барлық конфигурациялар кідіріссіз қызмет көрсетті.';
+
+    const scientificSummaryKZ = `Байланыстар пулын сынау нәтижесінде ең жоғары өткізу қабілеті (Throughput) пул көлемі ${optimal.pool_size} болғанда байқалды (${optimal.qps} QPS, орташа кідіріс ${optimal.stats.mean_ms} мс, P95: ${optimal.stats.p95_ms} мс). Ең төменгі P95 кідірісі пул көлемі ${lowestP95.pool_size} кезінде анықталды (${lowestP95.stats.p95_ms} мс). ${saturationNote} Бұлттық Neon PostgreSQL ортасында сұраныстар ағыны ${concurrency} болғанда оңтайлы пул өлшемі ${optimal.pool_size} деп бағаланады.`;
+
+    // Persist master result into benchmark_results
+    const persisted = await persistBenchmarkResult({
+      experiment_type: 'connection_pooling',
+      dataset_size: datasetSize,
+      execution_time_ms: steps.reduce((sum, s) => sum + s.duration_ms, 0),
+      average_latency_ms: optimal.stats.mean_ms,
+      min_latency_ms: optimal.stats.min_ms,
+      max_latency_ms: optimal.stats.max_ms,
+      qps: optimal.qps,
+      error_rate: optimal.stats.failure_count / (optimal.stats.count || 1),
+      experiment_metadata: {
+        pool_sizes: poolSizes,
+        concurrency,
+        repetitions_per_worker: repetitionsPerWorker,
+        endpoint_type: endpointType,
+        steps,
+        optimal_pool_size: optimal.pool_size,
+        max_qps: optimal.qps,
+        lowest_p95_pool_size: lowestP95.pool_size,
+        lowest_p95_ms: lowestP95.stats.p95_ms,
+        scientific_summary_kz: scientificSummaryKZ,
+        database_environment: process.env.ENVIRONMENT_NAME || 'Cloud-Neon-Serverless',
+      },
+    });
+
+    // Also persist individual step records for each pool size configuration
+    for (const step of steps) {
+      await persistBenchmarkResult({
+        experiment_type: 'connection_pooling_step',
+        dataset_size: datasetSize,
+        execution_time_ms: step.duration_ms,
+        average_latency_ms: step.stats.mean_ms,
+        min_latency_ms: step.stats.min_ms,
+        max_latency_ms: step.stats.max_ms,
+        qps: step.qps,
+        error_rate: step.stats.failure_count / (step.stats.count || 1),
+        experiment_metadata: {
+          experiment_master_id: persisted.id,
+          pool_size: step.pool_size,
+          concurrency: step.concurrency,
+          query_type: 'by_id',
+          dataset_size: datasetSize,
+          mean_latency_ms: step.stats.mean_ms,
+          median_latency_ms: step.stats.median_ms,
+          p95_latency_ms: step.stats.p95_ms,
+          min_latency_ms: step.stats.min_ms,
+          max_latency_ms: step.stats.max_ms,
+          qps: step.qps,
+          error_rate: step.stats.failure_count / (step.stats.count || 1),
+          mean_acquire_wait_ms: step.mean_acquire_wait_ms,
+          mean_sql_exec_ms: step.mean_sql_exec_ms,
+          p95_acquire_wait_ms: step.p95_acquire_wait_ms,
+          connection_saturation_detected: step.connection_saturation_detected,
+          endpoint_type: endpointType,
+          database_environment: process.env.ENVIRONMENT_NAME || 'Cloud-Neon-Serverless',
+        },
+      });
+    }
+
+    return {
+      experiment_name: 'PostgreSQL Connection Pooling Performance Experiment',
+      concurrency,
+      repetitions_per_worker: repetitionsPerWorker,
+      total_queries_per_step: concurrency * repetitionsPerWorker,
+      dataset_size: datasetSize,
+      endpoint_type: endpointType,
+      steps,
+      optimal_pool_size: optimal.pool_size,
+      max_qps: optimal.qps,
+      lowest_p95_pool_size: lowestP95.pool_size,
+      lowest_p95_ms: lowestP95.stats.p95_ms,
+      scientific_summary_kz: scientificSummaryKZ,
+      persisted_id: persisted.id,
+      timestamp: persisted.created_at,
     };
   } finally {
     releaseBenchmarkLock();

@@ -547,3 +547,163 @@ tbody td { padding: 0.6rem 1rem; color: var(--text-primary); }
 .text-orange { color: var(--accent-orange); }
 .text-muted  { color: var(--text-muted); }
 .mono        { font-family: var(--font-mono); }
+
+/* =========================================================
+   Academic Report & Scientific Analysis Styling
+   ========================================================= */
+
+.report-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  margin-bottom: 2rem;
+  line-height: 1.8;
+}
+
+.report-header {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.report-title-kz {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.report-subtitle {
+  font-size: 0.85rem;
+  color: var(--accent-cyan);
+  margin-top: 0.35rem;
+}
+
+.stat-grid-academic {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+
+.stat-box-academic {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+}
+
+.stat-box-academic__label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.stat-box-academic__val {
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--accent-cyan);
+  margin-top: 0.25rem;
+}
+
+.stat-box-academic__ci {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.formula-card {
+  background: rgba(6, 182, 212, 0.05);
+  border-left: 3px solid var(--accent-cyan);
+  padding: 0.85rem 1.2rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.82rem;
+  margin: 1rem 0;
+  font-family: var(--font-mono);
+}
+
+.scientific-summary-box {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  margin: 1rem 0;
+}
+
+.db-connect-bar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.db-connect-input {
+  flex: 1;
+  min-width: 280px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+}
+
+.btn-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+  color: white;
+  border: none;
+  padding: 0.55rem 1.2rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  text-decoration: none;
+}
+.btn-export:hover {
+  opacity: 0.9;
+}
+
+@media print {
+  .app-header, .nav-tabs, .btn-run, .btn-filter, .db-connect-bar, .toast-container {
+    display: none !important;
+  }
+  body, .main-content {
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+  }
+  .report-section {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+  }
+  .stat-box-academic, .formula-card, .scientific-summary-box {
+    border: 1px solid #ccc !important;
+    background: #f9f9f9 !important;
+    color: #000000 !important;
+  }
+  .stat-box-academic__val, .stat-box-academic__label, .report-title-kz {
+    color: #000000 !important;
+  }
+}
